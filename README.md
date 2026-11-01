@@ -14,7 +14,7 @@
 
 Modern web assistants are typically limited to static floating chat bubbles that dump unstructured text. **AI Avatar Assistant** transforms websites into spatial, interactive environments through an embodied human-like guide that physically navigates, points to elements, and walks visitors through complex flows.
 
-```mermaid
+```
 flowchart TD
     subgraph Browser ["Host Web Application (Browser)"]
         DOM["Host Webpage DOM"]
