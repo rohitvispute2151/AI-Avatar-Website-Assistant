@@ -47,7 +47,7 @@ export class SiteGuideElement extends HTMLElement {
     });
 
     this.formStateWatcher = new FormStateWatcher((nodeId, state) => {
-      // Coarse state updated locally
+      this.actionExecutor?.handleFormStateChange(nodeId, state);
     });
 
     const bootstrapSession = async () => {

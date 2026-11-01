@@ -1,4 +1,4 @@
-import { TurnPlan, PlannedStep, Gesture } from "../page/manifest";
+import { TurnPlan, PlannedStep, Gesture, FormState } from "../page/manifest";
 import { resolveTargetElement } from "./target-resolver";
 import { scrollController } from "./scroll-controller";
 import { calculateAvatarAnchor } from "./anchor-layout";
@@ -59,7 +59,11 @@ export class ActionExecutor {
     }
 
     if (plan.intent === "guide_form_field" && plan.targetNodeId) {
-      await this.guideFormField(plan.targetNodeId, plan.answer);
+      if (plan.steps && plan.steps.length > 0) {
+        await this.startTour(plan.steps);
+      } else {
+        await this.guideFormField(plan.targetNodeId, plan.answer);
+      }
       return;
     }
 
@@ -137,6 +141,24 @@ export class ActionExecutor {
     await this.stage.moveToAnchor(anchor);
     this.stage.setGesture("point_left");
     this.speak(speechText);
+  }
+
+  public handleFormStateChange(nodeId: string, state: FormState): void {
+    if (tourController.getStatus() === "running") {
+      const currentStep = tourController.getCurrentStep();
+      if (currentStep && currentStep.targetNodeId === nodeId && currentStep.stepKind === "form_field") {
+        if (state === "filled") {
+          // Field completed! Smoothly advance to the next field in the form tour
+          setTimeout(() => {
+            if (tourController.getStatus() === "running") {
+              tourController.next();
+            }
+          }, 1000);
+        } else if (state === "invalid") {
+          this.stage.setGesture("explain");
+        }
+      }
+    }
   }
 
   public stop(): void {

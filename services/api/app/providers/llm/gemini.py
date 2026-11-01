@@ -11,10 +11,9 @@ logger = logging.getLogger(__name__)
 class GeminiLLMProvider:
     def __init__(self, api_key: str = "", model: str = "", fallback_to_groq: bool = True):
         self.api_key = api_key or settings.gemini_api_key
-        raw_model = model or settings.llm_model or "gemini-flash-latest"
-        # Avoid deprecated models
-        if "2.5-flash" in raw_model:
-            raw_model = "gemini-flash-latest"
+        raw_model = model or "gemini-3.8-flash"
+        if "/" in raw_model or "gemini" not in raw_model.lower():
+            raw_model = "gemini-3.8-flash"
         self.model = raw_model
         self.fallback_to_groq = fallback_to_groq
 
@@ -47,7 +46,7 @@ class GeminiLLMProvider:
                 "generationConfig": {
                     "response_mime_type": "application/json",
                     "temperature": 0.1,
-                    "max_output_tokens": 4600,
+                    "max_output_tokens": 1024,
                 }
             }
 
