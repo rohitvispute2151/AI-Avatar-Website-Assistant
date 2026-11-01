@@ -1,0 +1,23 @@
+{
+  "name": "@ai-avatar/widget",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "dist/site-guide.js",
+  "module": "dist/site-guide.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "vite build",
+    "dev": "vite",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@pixiv/three-vrm": "^3.3.4",
+    "three": "^0.170.0"
+  },
+  "devDependencies": {
+    "@types/three": "^0.170.0",
+    "typescript": "^5.6.3",
+    "vite": "^6.0.1"
+  }
+}
+

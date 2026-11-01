@@ -1,0 +1,14 @@
+{
+  "name": "ai-avatar-assistant-monorepo",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "npm --workspace=@ai-avatar/demo-web run dev",
+    "build": "npm --workspace=@ai-avatar/widget run build && npm --workspace=@ai-avatar/demo-web run build",
+    "test:api": "cd services/api && .venv/Scripts/python -m pytest tests/test_unit.py"
+  }
+}
+
