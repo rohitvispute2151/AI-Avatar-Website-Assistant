@@ -93,11 +93,17 @@ export class ActionExecutor {
     // 4. Move avatar to anchor (plays walk animation during transition)
     await this.stage.moveToAnchor(anchor);
 
-    // 5. Point and speak
-    this.stage.setGesture(gesture || (anchor.side === "left" ? "point_right" : "point_left"));
+    // 5. Point and aim gaze toward target element procedurally
+    this.stage.pointAt(rect);
+
     this.speak(speechText, () => {
-      // Clear highlight after speech finishes
-      setTimeout(() => this.highlighter.clear(), 2000);
+      // Clear highlight and reset look-at after speech finishes
+      setTimeout(() => {
+        this.highlighter.clear();
+        this.stage.stopPointing();
+        this.stage.getRig()?.resetLookAt();
+        this.stage.returnToDock();
+      }, 2000);
     });
   }
 
@@ -112,6 +118,8 @@ export class ActionExecutor {
           const anchor = calculateAvatarAnchor(rect);
           this.highlighter.highlight(el);
           await this.stage.moveToAnchor(anchor);
+          this.stage.pointAt(rect);
+        } else {
           this.stage.setGesture(step.gesture || "open_palm");
         }
         this.speak(step.spokenText, () => {
@@ -120,6 +128,8 @@ export class ActionExecutor {
       },
       () => {
         this.highlighter.clear();
+        this.stage.stopPointing();
+        this.stage.returnToDock();
         this.stage.setState("idle");
         this.speak("That concludes our tour of the page! Let me know if you have any questions.");
       }
@@ -139,8 +149,12 @@ export class ActionExecutor {
 
     this.highlighter.highlight(el);
     await this.stage.moveToAnchor(anchor);
-    this.stage.setGesture("point_left");
-    this.speak(speechText);
+    this.stage.pointAt(rect);
+    this.speak(speechText, () => {
+      setTimeout(() => {
+        this.stage.stopPointing();
+      }, 1500);
+    });
   }
 
   public handleFormStateChange(nodeId: string, state: FormState): void {
@@ -164,6 +178,8 @@ export class ActionExecutor {
   public stop(): void {
     tourController.stop();
     this.highlighter.clear();
+    this.stage.stopPointing();
+    this.stage.returnToDock();
     audioPlayer.stop();
     this.stage.setState("idle");
   }

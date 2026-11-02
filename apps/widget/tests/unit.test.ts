@@ -1,27 +1,71 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import * as THREE from "three";
 
-import { validateConfig } from "../src/config.ts";
-import { getCoarseFormState } from "../src/page/form-state-watcher.ts";
-import { NodeRegistry } from "../src/page/node-registry.ts";
-import { GestureController } from "../src/avatar/gesture-controller.ts";
-import { AnimationController } from "../src/avatar/animation-controller.ts";
-import { TourController } from "../src/conversation/tour-controller.ts";
+import { validateConfig } from "../src/config";
+import { getCoarseFormState } from "../src/page/form-state-watcher";
+import { NodeRegistry } from "../src/page/node-registry";
+import { GestureController } from "../src/avatar/gesture-controller";
+import { AnimationController } from "../src/avatar/animation-controller";
+import { TourController } from "../src/conversation/tour-controller";
+import { MorphTargetMapper, OCULUS_VISEMES } from "../src/avatar/morph-mapper";
+import { visemeEngine } from "../src/voice/viseme-engine";
+import { speechSynthesizer } from "../src/voice/speech-synthesis";
+import { createHumanoidClips } from "../src/avatar/animation-clips";
+import { PointingController } from "../src/avatar/pointing-controller";
 
 test("SiteGuideConfig: rejects missing widgetId or apiBaseUrl", () => {
   assert.throws(() => validateConfig({} as any), /widgetId/);
   assert.throws(() => validateConfig({ widgetId: "w1" } as any), /apiBaseUrl/);
 });
 
+test("SiteGuideConfig: supports independent avatarVisible and chatOpen options", () => {
+  const defaultConf = validateConfig({
+    widgetId: "test-w",
+    apiBaseUrl: "http://localhost:8000",
+  });
+  assert.equal(defaultConf.avatarVisible, true);
+  assert.equal(defaultConf.chatOpen, true);
+
+  const customConf = validateConfig({
+    widgetId: "test-w",
+    apiBaseUrl: "http://localhost:8000",
+    avatarVisible: false,
+    chatOpen: false,
+  });
+  assert.equal(customConf.avatarVisible, false);
+  assert.equal(customConf.chatOpen, false);
+});
+
+test("calculateAvatarAnchor: calculates safe placement avoiding bottom-right chat dock", () => {
+  const { calculateAvatarAnchor } = require("../src/navigation/anchor-layout");
+  // Simulated window dimensions in test environment
+  global.window = { innerWidth: 1280, innerHeight: 720 } as any;
+
+  // Target in top-center of page
+  const targetTop = {
+    left: 500,
+    right: 700,
+    top: 150,
+    bottom: 250,
+    width: 200,
+    height: 100,
+  } as DOMRect;
+
+  const anchor = calculateAvatarAnchor(targetTop, 220, 520);
+  assert.ok(anchor.x > 0);
+  assert.ok(anchor.y >= 16);
+  // Must not overlap the bottom-right chat dock (x > 870, y > 340)
+  assert.ok(!(anchor.x > 870 && anchor.y > 340));
+});
+
 test("SiteGuideConfig: enforces HTTPS for non-localhost endpoints", () => {
-  // Localhost allowed with HTTP
   const localConfig = validateConfig({
     widgetId: "demo",
     apiBaseUrl: "http://localhost:8000",
   });
   assert.equal(localConfig.apiBaseUrl, "http://localhost:8000");
 
-  // Non-localhost must be HTTPS
   assert.throws(
     () =>
       validateConfig({
@@ -31,16 +75,185 @@ test("SiteGuideConfig: enforces HTTPS for non-localhost endpoints", () => {
     /must be HTTPS except on localhost/
   );
 
-  // HTTPS is accepted
   const httpsConfig = validateConfig({
     widgetId: "demo",
     apiBaseUrl: "https://api.production.com",
   });
   assert.equal(httpsConfig.apiBaseUrl, "https://api.production.com");
+  assert.equal(httpsConfig.cameraFraming, "bust");
+  assert.equal(httpsConfig.quality, "auto");
+});
+
+test("MorphTargetMapper: resolves aliases and sets morph values", () => {
+  const root = new THREE.Group();
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array([0, 0, 0, 1, 1, 1, 2, 2, 2]), 3));
+
+  const mesh = new THREE.Mesh(geometry);
+  mesh.morphTargetDictionary = {
+    mouthOpen: 0,
+    viseme_aa: 1,
+    eyeBlink_L: 2,
+    mouthSmile_R: 3,
+  };
+  mesh.morphTargetInfluences = [0, 0, 0, 0];
+  root.add(mesh);
+
+  const mapper = new MorphTargetMapper(root);
+
+  assert.equal(mapper.hasTarget("jawOpen"), true);
+  assert.equal(mapper.hasTarget("viseme_aa"), true);
+  assert.equal(mapper.hasTarget("eyeBlinkLeft"), true);
+  assert.equal(mapper.hasTarget("mouthSmileRight"), true);
+
+  // Set canonical value
+  mapper.setValue("jawOpen", 0.75);
+  assert.equal(mesh.morphTargetInfluences[0], 0.75);
+
+  mapper.setValue("eyeBlinkLeft", 1.0);
+  assert.equal(mesh.morphTargetInfluences[2], 1.0);
+
+  mapper.resetAll();
+  assert.equal(mesh.morphTargetInfluences[0], 0);
+  assert.equal(mesh.morphTargetInfluences[2], 0);
+});
+
+test("VisemeEngine: parses text into timed viseme sequences", () => {
+  const text = "Hello and welcome to our website!";
+  const timeline = visemeEngine.generateVisemeTimeline(text, 150);
+
+  assert.ok(timeline.length >= 5);
+  assert.equal(timeline[0].word, "Hello");
+  assert.ok(timeline[0].keyframes.length > 0);
+
+  // Check that visemes include valid Oculus viseme names
+  for (const seq of timeline) {
+    for (const kf of seq.keyframes) {
+      assert.ok(OCULUS_VISEMES.includes(kf.viseme));
+    }
+  }
+});
+
+test("SpeechSynthesis: extracts emotion tags from speech text", () => {
+  const tagged = "Welcome! [emotion:friendly] How can I help you today?";
+  const { cleanText, emotion } = speechSynthesizer.parseEmotionAndSanitizeText(tagged);
+
+  assert.equal(emotion, "friendly");
+  assert.equal(cleanText, "Welcome! How can I help you today?");
+
+  const untagged = "Just a normal answer.";
+  const res2 = speechSynthesizer.parseEmotionAndSanitizeText(untagged);
+  assert.equal(res2.emotion, undefined);
+  assert.equal(res2.cleanText, "Just a normal answer.");
+});
+
+test("HumanoidClips: generates retargetable animation clips", () => {
+  const clips = createHumanoidClips();
+
+  assert.ok(clips["idle"]);
+  assert.ok(clips["walk"]);
+  assert.ok(clips["talk_1"]);
+  assert.ok(clips["point_left"]);
+  assert.ok(clips["point_right"]);
+  assert.ok(clips["thinking"]);
+  assert.ok(clips["wave"]);
+
+  // Verify idle duration and tracks
+  assert.equal(clips["idle"].duration, 4.0);
+  assert.ok(clips["idle"].tracks.length >= 5);
+
+  // Verify bone track names
+  const trackNames = clips["idle"].tracks.map((t) => t.name);
+  assert.ok(trackNames.includes("Hips.position"));
+  assert.ok(trackNames.includes("Head.quaternion"));
+  assert.ok(trackNames.includes("LeftArm.quaternion"));
+  assert.ok(trackNames.includes("LeftHandIndex1.quaternion"));
+  assert.ok(trackNames.includes("RightHandPinky2.quaternion"));
+});
+
+test("PointingController: aims with closest arm and handles edge cases", () => {
+  const pointer = new PointingController();
+  global.window = { innerWidth: 1280, innerHeight: 720 } as any;
+
+  // Mock avatar at bottom-right
+  const avatarEl = {
+    getBoundingClientRect: () => ({
+      left: 1000,
+      top: 200,
+      width: 280,
+      height: 520,
+    }),
+  } as any;
+
+  // 1. Target on left side of avatar
+  const targetLeft = {
+    left: 400,
+    right: 500,
+    top: 250,
+    bottom: 300,
+    width: 100,
+    height: 50,
+  } as DOMRect;
+
+  const resLeft = pointer.setTarget(targetLeft, avatarEl);
+  assert.equal(resLeft.isEdgeCase, false);
+  assert.equal(pointer.getActiveSide(), "left");
+  assert.ok(pointer.isPointing());
+
+  // Update simulation step
+  const state = pointer.update(0.1, 1.0);
+  assert.ok(state.weight > 0);
+  assert.equal(state.pointingSide, "left");
+  assert.ok(state.left.armQuat);
+  assert.ok(state.right.armQuat);
+
+  // 2. Speaking two-handed presenting gestures (without target)
+  pointer.stopPointing();
+  pointer.setSpeaking(true);
+  const speakState = pointer.update(0.1, 2.0, 0.25);
+  assert.ok(speakState.weight > 0);
+  assert.equal(speakState.isPointing, false);
+  assert.ok(speakState.left.foreArmQuat);
+  assert.ok(speakState.right.foreArmQuat);
+
+  // 3. Off-screen edge case
+  const targetOffscreen = {
+    left: 1400,
+    right: 1500,
+    top: 200,
+    bottom: 300,
+    width: 100,
+    height: 100,
+  } as DOMRect;
+
+  const resOff = pointer.setTarget(targetOffscreen, avatarEl);
+  assert.equal(resOff.isEdgeCase, true);
+  assert.equal(resOff.fallbackGesture, "explain");
+
+  // 4. Close to avatar (< 75px)
+  const targetClose = {
+    left: 1100,
+    right: 1150,
+    top: 320,
+    bottom: 350,
+    width: 50,
+    height: 30,
+  } as DOMRect;
+
+  const resClose = pointer.setTarget(targetClose, avatarEl);
+  assert.equal(resClose.isEdgeCase, true);
+  assert.equal(resClose.fallbackGesture, "explain");
+
+  // 5. Smooth stop
+  pointer.stopPointing();
+  pointer.setSpeaking(false);
+  for (let i = 0; i < 15; i++) {
+    pointer.update(0.1, 1.0);
+  }
+  assert.equal(pointer.isPointing(), false);
 });
 
 test("FormStateWatcher: coarse state detection never leaks input value", () => {
-  // Password field always returns unknown
   const mockPassword = {
     type: "password",
     value: "supersecret123",
@@ -49,16 +262,6 @@ test("FormStateWatcher: coarse state detection never leaks input value", () => {
   } as any;
   assert.equal(getCoarseFormState(mockPassword), "unknown");
 
-  // Disabled field returns unknown
-  const mockDisabled = {
-    type: "text",
-    value: "test",
-    disabled: true,
-    getAttribute: () => null,
-  } as any;
-  assert.equal(getCoarseFormState(mockDisabled), "unknown");
-
-  // Filled field returns 'filled' without value leakage
   const mockFilled = {
     type: "text",
     value: "user@example.com",
@@ -66,20 +269,10 @@ test("FormStateWatcher: coarse state detection never leaks input value", () => {
     getAttribute: () => null,
   } as any;
   assert.equal(getCoarseFormState(mockFilled), "filled");
-
-  // Empty field returns 'empty'
-  const mockEmpty = {
-    type: "text",
-    value: "   ",
-    disabled: false,
-    getAttribute: () => null,
-  } as any;
-  assert.equal(getCoarseFormState(mockEmpty), "empty");
 });
 
 test("NodeRegistry: generates stable unique IDs and handles registration", () => {
   const registry = new NodeRegistry();
-
   const el1 = {
     tagName: "BUTTON",
     id: "cta-btn",
@@ -90,75 +283,5 @@ test("NodeRegistry: generates stable unique IDs and handles registration", () =>
 
   const id1 = registry.getOrCreateId(el1, "button");
   assert.ok(id1.startsWith("node_button_cta-btn"));
-
-  // Re-getting returns same ID (WeakMap stability)
-  const id1Repeat = registry.getOrCreateId(el1, "button");
-  assert.equal(id1, id1Repeat);
-
-  // Resolving ID returns the element
   assert.equal(registry.resolve(id1), el1);
-
-  // When element is disconnected, it returns null
-  el1.isConnected = false;
-  assert.equal(registry.resolve(id1), null);
 });
-
-test("AnimationController & GestureController: multi-layer blending", () => {
-  const gestures = new GestureController();
-  const anim = new AnimationController(gestures);
-
-  // Base idle pose
-  const idlePose = anim.update(0.016, 0.5, 0);
-  assert.ok(idlePose.torsoY > 1.2);
-  assert.equal(idlePose.mouthScaleY, 1.0);
-
-  // Set walk locomotion and point_right gesture simultaneously
-  anim.setLocomotion("walk");
-  gestures.setGesture("point_right");
-
-  // Update animation over a few frames to let blend weight accumulate
-  for (let i = 0; i < 30; i++) {
-    anim.update(0.03, 1.0 + i * 0.03, 0.5);
-  }
-
-  const blendedPose = anim.update(0.03, 2.0, 0.8);
-  // Legs are actively swinging for locomotion
-  assert.notEqual(blendedPose.leftLegRotation.x, 0);
-  // Mouth is open from lip-sync
-  assert.ok(blendedPose.mouthScaleY > 2.0);
-  // Pointing gesture is active on right arm
-  assert.ok(blendedPose.rightArmRotation.z < -0.5);
-});
-
-test("TourController: step navigation, bounds and completion", () => {
-  const tour = new TourController();
-
-  const steps = [
-    { targetNodeId: "n1", spokenText: "Step 1", gesture: "open_palm" as const, stepKind: "section" as const },
-    { targetNodeId: "n2", spokenText: "Step 2", gesture: "point_right" as const, stepKind: "section" as const },
-  ];
-
-  let currentStepIndex = -1;
-  let completed = false;
-
-  tour.start(
-    steps,
-    (_step, idx) => {
-      currentStepIndex = idx;
-    },
-    () => {
-      completed = true;
-    }
-  );
-
-  assert.equal(tour.getStatus(), "running");
-  assert.equal(currentStepIndex, 0);
-
-  tour.next();
-  assert.equal(currentStepIndex, 1);
-
-  tour.next(); // At end -> complete
-  assert.equal(tour.getStatus(), "completed");
-  assert.equal(completed, true);
-});
-

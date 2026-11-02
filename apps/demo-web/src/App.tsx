@@ -20,8 +20,12 @@ export const App: React.FC = () => {
       locale: "en-US",
       voiceEnabled: true,
       textEnabled: true,
+      avatarAssetUrl: "/assets/avatar/avatar.glb",
+      avatarHdriUrl: "/assets/avatar/studio.hdr",
+      quality: "auto",
+      cameraFraming: "bust",
       onReady: () => {
-        console.log("SiteGuide widget initialized and ready.");
+        console.log("SiteGuide widget initialized and ready with 3D Humanoid Avatar.");
       },
       onError: (err: any) => {
         console.warn("SiteGuide widget notice:", err);

@@ -50,6 +50,10 @@ export class AnimationController {
     this.locomotion = state;
   }
 
+  public getLocomotion(): LocomotionState {
+    return this.locomotion;
+  }
+
   public setGesture(gesture: ExtendedGesture | "none", durationMs?: number): void {
     this.gestureController.setGesture(gesture, durationMs);
   }

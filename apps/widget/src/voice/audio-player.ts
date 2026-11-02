@@ -1,10 +1,16 @@
 import { lipSyncController } from "../avatar/lipsync-controller";
-import { speechSynthesizer } from "./speech-synthesis";
+import { speechSynthesizer, SpeakOptions } from "./speech-synthesis";
+import { AvatarEmotion } from "../avatar/morph-mapper";
 
 export class AudioPlayer {
   private audioElement: HTMLAudioElement | null = null;
   private isPlayingAudio = false;
   private currentObjectUrl: string | null = null;
+  private onEmotionDetected?: (emotion: AvatarEmotion) => void;
+
+  public setEmotionCallback(cb: (emotion: AvatarEmotion) => void): void {
+    this.onEmotionDetected = cb;
+  }
 
   public async playAudioBytes(
     audioBytes: ArrayBuffer,
@@ -48,16 +54,24 @@ export class AudioPlayer {
     text: string,
     locale: string = "en-US",
     onStart?: () => void,
-    onEnd?: () => void
-  ): void {
+    onEnd?: () => void,
+    rate = 1.0,
+    voice?: string
+  ): { cleanText: string; emotion?: AvatarEmotion } {
     this.stop();
     this.isPlayingAudio = true;
 
-    // Start procedural lip sync for speech synthesis
-    lipSyncController.startProcedural();
+    // Parse inline emotion tags and start viseme timeline
+    const { cleanText, emotion } = speechSynthesizer.parseEmotionAndSanitizeText(text);
+    if (emotion && this.onEmotionDetected) {
+      this.onEmotionDetected(emotion);
+    }
+
+    // Initialize accurate viseme sequence from text
+    lipSyncController.startSpeechTimeline(cleanText, 160 * rate);
 
     speechSynthesizer.speak(
-      text,
+      cleanText,
       locale,
       () => {
         if (onStart) onStart();
@@ -65,8 +79,31 @@ export class AudioPlayer {
       () => {
         this.cleanup();
         if (onEnd) onEnd();
-      }
+      },
+      (charIndex) => {
+        lipSyncController.syncWordBoundary(charIndex);
+      },
+      rate,
+      voice
     );
+
+    return { cleanText, emotion };
+  }
+
+  public async speakAsync(text: string, options: SpeakOptions = {}): Promise<void> {
+    return new Promise<void>((resolve) => {
+      this.speakText(
+        text,
+        options.locale || "en-US",
+        options.onStart,
+        () => {
+          if (options.onEnd) options.onEnd();
+          resolve();
+        },
+        options.rate || 1.0,
+        options.voice
+      );
+    });
   }
 
   public stop(): void {
@@ -74,9 +111,7 @@ export class AudioPlayer {
       try {
         this.audioElement.pause();
         this.audioElement.currentTime = 0;
-      } catch {
-        // ignore
-      }
+      } catch {}
       this.audioElement = null;
     }
     if (this.currentObjectUrl) {
@@ -104,4 +139,3 @@ export class AudioPlayer {
 }
 
 export const audioPlayer = new AudioPlayer();
-

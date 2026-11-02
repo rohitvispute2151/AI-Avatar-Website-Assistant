@@ -8,6 +8,7 @@ import { WidgetView } from "./ui/widget-view";
 import { AvatarStage } from "./avatar/avatar-stage";
 import { TargetHighlighter } from "./navigation/highlighter";
 import { ActionExecutor } from "./navigation/action-executor";
+import { DebugPanel } from "./ui/debug-panel";
 
 export class SiteGuideElement extends HTMLElement {
   private config: SiteGuideConfig | null = null;
@@ -74,12 +75,27 @@ export class SiteGuideElement extends HTMLElement {
     );
 
     // 5. Build Widget UI
-    this.widgetView = new WidgetView(this.shadowRoot, this.chatController);
+    this.widgetView = new WidgetView(this.shadowRoot, this.chatController, {
+      avatarVisible: config.avatarVisible,
+      chatOpen: config.chatOpen,
+    });
 
     // 6. Initialize 3D Avatar Stage
     const canvasWrap = this.widgetView.getCanvasContainer();
-    this.avatarStage = new AvatarStage(canvasWrap, config.avatarAssetUrl);
+    this.avatarStage = new AvatarStage(canvasWrap, {
+      avatarAssetUrl: config.avatarAssetUrl,
+      avatarHdriUrl: config.avatarHdriUrl,
+      quality: config.quality,
+      cameraFraming: config.cameraFraming,
+      assetBaseUrl: config.assetBaseUrl,
+    });
     this.widgetView.setAvatarStage(this.avatarStage);
+
+    // Initialize Debug Inspector if enabled via URL ?avatarDebug=1
+    const shell = this.shadowRoot.querySelector("#sg-shell") as HTMLElement;
+    if (shell) {
+      new DebugPanel(shell, this.avatarStage);
+    }
 
     // 7. Initialize Target Highlighter & Action Executor
     this.highlighter = new TargetHighlighter(this);
@@ -113,6 +129,38 @@ export class SiteGuideElement extends HTMLElement {
         });
       }
     }
+  }
+
+  public openChat(): void {
+    this.widgetView?.openChat();
+  }
+
+  public closeChat(): void {
+    this.widgetView?.closeChat();
+  }
+
+  public toggleChat(): void {
+    this.widgetView?.toggleChat();
+  }
+
+  public showAvatar(): void {
+    this.widgetView?.showAvatar();
+  }
+
+  public hideAvatar(): void {
+    this.widgetView?.hideAvatar();
+  }
+
+  public toggleAvatar(): void {
+    this.widgetView?.toggleAvatar();
+  }
+
+  public isChatOpen(): boolean {
+    return this.widgetView?.isChatOpen() ?? false;
+  }
+
+  public isAvatarVisible(): boolean {
+    return this.widgetView?.isAvatarVisible() ?? false;
   }
 
   public open(): void {

@@ -8,7 +8,8 @@
   "scripts": {
     "build": "vite build",
     "dev": "vite",
-    "test": "vitest run"
+    "test": "node -e \"require('esbuild').buildSync({ entryPoints: ['tests/unit.test.ts'], outfile: 'tests/dist/unit.test.cjs', format: 'cjs', platform: 'node', bundle: true, external: ['three', 'node:test', 'node:assert/strict'] });\" && node --test tests/dist/unit.test.cjs",
+    "validate:avatar": "node scripts/validate-avatar-model.js"
   },
   "dependencies": {
     "@pixiv/three-vrm": "^3.3.4",

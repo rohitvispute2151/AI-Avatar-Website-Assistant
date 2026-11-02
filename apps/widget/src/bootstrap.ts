@@ -30,6 +30,14 @@ export const SiteGuide = {
       minimize: () => el.minimize(),
       hide: () => el.hide(),
       setVoiceEnabled: (enabled: boolean) => el.setVoiceEnabled(enabled),
+      openChat: () => el.openChat(),
+      closeChat: () => el.closeChat(),
+      toggleChat: () => el.toggleChat(),
+      showAvatar: () => el.showAvatar(),
+      hideAvatar: () => el.hideAvatar(),
+      toggleAvatar: () => el.toggleAvatar(),
+      isChatOpen: () => el.isChatOpen(),
+      isAvatarVisible: () => el.isAvatarVisible(),
     };
   },
 

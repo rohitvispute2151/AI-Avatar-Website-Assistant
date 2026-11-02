@@ -125,12 +125,48 @@ const guide = SiteGuide.init({
 | `position` | `"bottom-right" \| "bottom-left"` | `"bottom-right"` | Initial dock anchor on the viewport. |
 | `locale` | `string` | `"en-US"` | BCP-47 language tag for speech synthesis and recognition. |
 | `voiceEnabled` | `boolean` | `true` | Enables Web Speech API transcription and TTS audio playback. |
-| `avatarAssetUrl` | `string?` | `undefined` | Optional external `.vrm` character model URL (falls back to procedural character). |
-
+| `avatarAssetUrl` | `string?` | `"/assets/avatar/avatar.glb"` | Path or URL to custom `.glb` or `.vrm` character model. |
+| `avatarHdriUrl` | `string?` | `"/assets/avatar/studio.hdr"` | Optional 1k equirectangular studio environment map. |
+| `quality` | `"auto" \| "low" \| "high"` | `"auto"` | PBR rendering quality profile with automatic frame-rate tuning. |
+| `cameraFraming` | `"bust" \| "full"` | `"bust"` | Waist-up digital human framing (with push-in) or full-body. |
+| `assetBaseUrl` | `string?` | `""` | CDN or static asset origin prefix. |
 
 ---
 
-## 3. Local Development & Quickstart
+## 3. Custom 3D Avatar Models & Morph Requirements
+
+The assistant includes a realistic, lifelike 3D spokesperson avatar with Apple ARKit-52 blendshapes and Oculus 15 speech visemes. You can also supply your own custom 3D character (exported from **Avaturn**, **MakeHuman**, **Blender**, or **VRoid Studio**).
+
+### Model Requirements & Format
+- **Format:** Binary glTF (`.glb`) or standard `.vrm` (under **6 MB** recommended).
+- **Skeleton:** Standard humanoid bone naming (`Hips`, `Spine`, `Neck`, `Head`, `LeftArm`, `RightArm`, `LeftLeg`, `RightLeg`, etc.).
+- **Camera Framing:** Default is `bust` (waist-up), providing optimal facial detail for spokesperson interaction.
+
+### Required & Supported Morph Targets
+
+| Category | Morphs / Visemes | Role in AI Avatar |
+|---|---|---|
+| **Speech Lip-Sync** | `viseme_aa`, `viseme_E`, `viseme_I`, `viseme_O`, `viseme_U`, `viseme_PP`, `viseme_FF`, `viseme_TH`, `viseme_DD`, `viseme_kk`, `viseme_CH`, `viseme_SS`, `viseme_nn`, `viseme_RR`, `viseme_sil` *(or `jawOpen` + `mouthFunnel` + `mouthPucker`)* | Word-synchronized speech lip movement with coarticulation |
+| **Blinking & Eyelids** | `eyeBlinkLeft`, `eyeBlinkRight` *(aliases: `eyeBlink_L`, `blink_l`, `blink`)* | Natural procedural blinking (2-5s intervals) and downward gaze eyelid follow |
+| **Eye Gaze** | `eyeLookUpLeft/Right`, `eyeLookDownLeft/Right`, `eyeLookInLeft/Right`, `eyeLookOutLeft/Right` | Micro-saccades, mouse cursor tracking, and pointing gaze alignment |
+| **Emotions** | `mouthSmileLeft/Right`, `mouthFrownLeft/Right`, `browInnerUp`, `browOuterUpLeft/Right`, `browDownLeft/Right`, `cheekSquintLeft/Right`, `eyeWideLeft/Right` | Expressive emotion transitions (`friendly`, `curious`, `thinking`, `excited`) |
+
+### Model Validation CLI
+You can test any `.glb` model before deploying to verify its morph target compatibility:
+
+```bash
+npm --workspace=@ai-avatar/widget run validate:avatar path/to/your-model.glb
+```
+
+### Live Debug Inspector Panel
+To inspect real-time visemes, test blendshape sliders, toggle emotions, and monitor FPS, load your page with the query parameter:
+```
+http://localhost:5173/?avatarDebug=1
+```
+
+---
+
+## 4. Local Development & Quickstart
 
 ### Prerequisites
 

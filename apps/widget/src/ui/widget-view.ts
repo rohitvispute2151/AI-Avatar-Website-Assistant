@@ -3,34 +3,66 @@ import { AvatarStage } from "../avatar/avatar-stage";
 import { tourController } from "../conversation/tour-controller";
 import { speechRecognizer } from "../voice/speech-recognition";
 import { microphoneController } from "../voice/microphone-controller";
+import { audioPlayer } from "../voice/audio-player";
+
+export interface WidgetViewOptions {
+  avatarVisible?: boolean;
+  chatOpen?: boolean;
+}
 
 export class WidgetView {
   private shadowRoot: ShadowRoot;
   private chatController: ChatController;
   private stage: AvatarStage | null = null;
+
+  // DOM Elements
   private launcherBtn!: HTMLElement;
-  private shell!: HTMLElement;
+  private avatarLayer!: HTMLElement;
   private canvasWrap!: HTMLElement;
+  private shell!: HTMLElement;
   private statusIndicator!: HTMLElement;
-  private statusText!: HTMLElement;
   private messagesContainer!: HTMLElement;
   private inputField!: HTMLInputElement;
   private micBtn!: HTMLElement;
   private sendBtn!: HTMLElement;
   private tourBar!: HTMLElement;
   private tourInfo!: HTMLElement;
-  private isMinimized = false;
-  private isRecording = false;
+  private toggleAvatarBtn: HTMLElement | null = null;
 
-  constructor(shadowRoot: ShadowRoot, chatController: ChatController) {
+  // Independent Visibility States
+  private avatarVisible: boolean = true;
+  private chatOpen: boolean = true;
+  private isRecording: boolean = false;
+
+  private dotColors = [
+    "#ec4899", // pink/magenta
+    "#10b981", // bright emerald green
+    "#3b82f6", // electric blue
+    "#a855f7", // vivid purple
+    "#06b6d4", // cyan
+    "#f59e0b", // warm amber
+  ];
+
+  constructor(
+    shadowRoot: ShadowRoot,
+    chatController: ChatController,
+    options: WidgetViewOptions = {}
+  ) {
     this.shadowRoot = shadowRoot;
     this.chatController = chatController;
+    if (options.avatarVisible !== undefined) this.avatarVisible = options.avatarVisible;
+    if (options.chatOpen !== undefined) this.chatOpen = options.chatOpen;
+
     this.buildDom();
     this.bindEvents();
+    this.applyVisibilityState();
   }
 
   public setAvatarStage(stage: AvatarStage): void {
     this.stage = stage;
+    if (!this.avatarVisible) {
+      this.stage.pause();
+    }
   }
 
   public getCanvasContainer(): HTMLElement {
@@ -42,37 +74,34 @@ export class WidgetView {
     root.className = "site-guide-root";
 
     root.innerHTML = `
-      <!-- Launcher Button -->
-      <button class="sg-launcher-btn sg-hidden" id="sg-launcher">
+      <!-- Launcher Button (shown only when BOTH chat is closed AND avatar is hidden) -->
+      <button class="sg-launcher-btn sg-hidden" id="sg-launcher" aria-label="Open AI Website Guide">
         <span>✨</span>
         <span>AI Website Guide</span>
       </button>
 
-      <!-- Shell Window -->
-      <div class="sg-shell sg-position-bottom-right" id="sg-shell">
-        <!-- Header -->
-        <div class="sg-header">
-          <div class="sg-title-wrap">
-            <div class="sg-status-indicator" id="sg-status-dot"></div>
-            <span class="sg-title" id="sg-title-text">AI Guide</span>
-          </div>
-          <div class="sg-actions">
-            <button class="sg-icon-btn sg-hidden" id="sg-btn-stop-speech" title="Stop Speaking" aria-label="Stop Speaking">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
-            </button>
-            <button class="sg-icon-btn" id="sg-btn-toggle-avatar" title="Collapse / Show Avatar" aria-label="Collapse / Show Avatar">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-            </button>
-            <button class="sg-icon-btn" id="sg-btn-minimize" title="Minimize" aria-label="Minimize">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14"/></svg>
-            </button>
-            <button class="sg-icon-btn" id="sg-btn-close" title="Hide Guide" aria-label="Hide Guide">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
-            </button>
-          </div>
+      <!-- Independent 3D Avatar Layer (Rendered in front of chat, z-index: 1000000) -->
+      <div class="sg-avatar-layer beside-chat" id="sg-avatar-layer">
+        <div class="sg-avatar-canvas-wrap" id="sg-avatar-wrap" role="presentation" aria-hidden="true"></div>
+        <div class="sg-avatar-tap-hint" id="sg-avatar-tap-hint" title="Click to chat with Ava">
+          <span>✨</span>
+          <span>Ask Ava</span>
+        </div>
+      </div>
+
+      <!-- Independent Chat Panel (Rendered on right, z-index: 999995) -->
+      <div class="sg-chat-panel" id="sg-shell">
+        
+        <!-- Top Row Suggestions -->
+        <div class="sg-quick-suggestions">
+          <button class="sg-pill-primary sg-quick-pill" data-prompt="Say hello 👋">Say hello 👋</button>
+          <button class="sg-pill-secondary sg-quick-pill" data-prompt="What does this company do?">About Company</button>
+          <button class="sg-pill-secondary sg-quick-pill" data-prompt="Walk me through this page">Page Tour</button>
+          <button class="sg-pill-secondary" id="sg-btn-not-now">Not now</button>
+          <div class="sg-status-indicator" id="sg-status-dot" title="Assistant Status: Ready"></div>
         </div>
 
-        <!-- Tour Toolbar -->
+        <!-- Tour Toolbar (visible during guided tours) -->
         <div class="sg-tour-bar sg-hidden" id="sg-tour-bar">
           <span id="sg-tour-info">Tour: Step 1</span>
           <div class="sg-tour-controls">
@@ -82,58 +111,91 @@ export class WidgetView {
           </div>
         </div>
 
-        <!-- 3D Avatar Canvas -->
-        <div class="sg-avatar-canvas-wrap" id="sg-avatar-wrap" role="presentation" aria-hidden="true"></div>
-
-        <!-- Messages Area -->
-        <div class="sg-messages" id="sg-messages" aria-live="polite">
-          <div class="sg-message assistant">
-            Hello! I'm your interactive website guide. How can I help you explore today?
+        <!-- Frosted Glass Messages Card -->
+        <div class="sg-messages-card" id="sg-messages" aria-live="polite">
+          <div class="sg-message-item assistant">
+            <div class="sg-msg-dot" style="background: #3b82f6; box-shadow: 0 0 10px #3b82f6;"></div>
+            <div class="sg-bubble assistant">
+              Hello! I'm your interactive website guide. How can I help you explore today?
+            </div>
           </div>
         </div>
 
-        <!-- Quick Prompts -->
-        <div class="sg-quick-prompts">
-          <button class="sg-quick-pill" data-prompt="What does this company do?">About Company</button>
-          <button class="sg-quick-pill" data-prompt="Where can I sign up?">Sign Up</button>
-          <button class="sg-quick-pill" data-prompt="Walk me through this page">Page Tour</button>
-          <button class="sg-quick-pill" data-prompt="Help me fill out this form">Fill Form</button>
-        </div>
-
-        <!-- Input Bar -->
-        <div class="sg-input-bar">
-          <input type="text" class="sg-input" id="sg-input" placeholder="Ask a question or request a tour..." />
-          <button class="sg-mic-btn" id="sg-btn-mic" title="Voice Input" aria-label="Voice Input">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <!-- Pill Input Bar (Image 2 Reference Layout) -->
+        <div class="sg-input-pill" id="sg-input-bar">
+          <!-- Left Circular Mic Button -->
+          <button class="sg-mic-btn" id="sg-btn-mic" title="Voice Input (Push to Talk)" aria-label="Voice Input">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/>
               <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
               <line x1="12" y1="19" x2="12" y2="23"/>
               <line x1="8" y1="23" x2="16" y2="23"/>
             </svg>
           </button>
+
+          <!-- Text Input Field -->
+          <input 
+            type="text" 
+            class="sg-input" 
+            id="sg-input" 
+            placeholder="Ask Ava or tap the mic." 
+            autocomplete="off"
+          />
+
+          <!-- Send Arrow Button -->
           <button class="sg-send-btn" id="sg-btn-send" title="Send Message" aria-label="Send Message">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <line x1="22" y1="2" x2="11" y2="13"/>
-              <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+              <line x1="5" y1="12" x2="19" y2="12"/>
+              <polyline points="12 5 19 12 12 19"/>
             </svg>
           </button>
+
+          <div class="sg-pill-divider"></div>
+
+          <!-- Actions Group with balanced spacing -->
+          <div class="sg-pill-actions">
+            <!-- Avatar Visibility Toggle Button (Independent State) -->
+            <button class="sg-action-icon active" id="sg-btn-toggle-avatar" title="Hide 3D Avatar" aria-label="Toggle 3D Avatar">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+                <circle cx="12" cy="7" r="4"/>
+              </svg>
+            </button>
+
+            <!-- Minimize Chat Button (Closes chat, leaves avatar visible) -->
+            <button class="sg-action-icon" id="sg-btn-minimize" title="Minimize Chat" aria-label="Minimize Chat">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                <line x1="5" y1="12" x2="19" y2="12"/>
+              </svg>
+            </button>
+
+            <!-- Close Chat Button -->
+            <button class="sg-action-icon" id="sg-btn-close" title="Close Chat" aria-label="Close Chat">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                <line x1="18" y1="6" x2="6" y2="18"/>
+                <line x1="6" y1="6" x2="18" y2="18"/>
+              </svg>
+            </button>
+          </div>
         </div>
+
       </div>
     `;
 
     this.shadowRoot.appendChild(root);
 
     this.launcherBtn = this.shadowRoot.getElementById("sg-launcher")!;
-    this.shell = this.shadowRoot.getElementById("sg-shell")!;
+    this.avatarLayer = this.shadowRoot.getElementById("sg-avatar-layer")!;
     this.canvasWrap = this.shadowRoot.getElementById("sg-avatar-wrap")!;
+    this.shell = this.shadowRoot.getElementById("sg-shell")!;
     this.statusIndicator = this.shadowRoot.getElementById("sg-status-dot")!;
-    this.statusText = this.shadowRoot.getElementById("sg-title-text")!;
     this.messagesContainer = this.shadowRoot.getElementById("sg-messages")!;
     this.inputField = this.shadowRoot.getElementById("sg-input") as HTMLInputElement;
     this.micBtn = this.shadowRoot.getElementById("sg-btn-mic")!;
     this.sendBtn = this.shadowRoot.getElementById("sg-btn-send")!;
     this.tourBar = this.shadowRoot.getElementById("sg-tour-bar")!;
     this.tourInfo = this.shadowRoot.getElementById("sg-tour-info")!;
+    this.toggleAvatarBtn = this.shadowRoot.getElementById("sg-btn-toggle-avatar");
   }
 
   private bindEvents(): void {
@@ -157,15 +219,32 @@ export class WidgetView {
       });
     });
 
-    // Toggle Avatar Canvas Visibility
-    this.shadowRoot.getElementById("sg-btn-toggle-avatar")?.addEventListener("click", () => {
-      this.canvasWrap.classList.toggle("collapsed");
+    // "Not now" button closes chat window (avatar stays visible)
+    this.shadowRoot.getElementById("sg-btn-not-now")?.addEventListener("click", () => {
+      this.closeChat();
     });
 
-    // Minimize & Close
-    this.shadowRoot.getElementById("sg-btn-minimize")?.addEventListener("click", () => this.minimize());
-    this.shadowRoot.getElementById("sg-btn-close")?.addEventListener("click", () => this.hide());
-    this.launcherBtn.addEventListener("click", () => this.open());
+    // Toggle Avatar visibility button (Independent of chat state)
+    this.toggleAvatarBtn?.addEventListener("click", () => {
+      this.toggleAvatar();
+    });
+
+    // Minimize & Close buttons close the chat panel only
+    this.shadowRoot.getElementById("sg-btn-minimize")?.addEventListener("click", () => this.closeChat());
+    this.shadowRoot.getElementById("sg-btn-close")?.addEventListener("click", () => this.closeChat());
+
+    // Launcher button reopens chat
+    this.launcherBtn.addEventListener("click", () => {
+      this.openChat();
+    });
+
+    // Clicking avatar when chat is closed reopens chat
+    this.avatarLayer.addEventListener("click", (e) => {
+      if (!this.chatOpen) {
+        e.stopPropagation();
+        this.openChat();
+      }
+    });
 
     // Tour controls
     this.shadowRoot.getElementById("sg-tour-next")?.addEventListener("click", () => tourController.next());
@@ -175,25 +254,117 @@ export class WidgetView {
       this.tourBar.classList.add("sg-hidden");
     });
 
-    // Stop speaking button
-    this.shadowRoot.getElementById("sg-btn-stop-speech")?.addEventListener("click", () => {
-      this.chatController.stop();
-    });
-
-    // Escape key handler on widget shell (LLD §12.2)
+    // Escape key closes the chat panel
     this.shell.addEventListener("keydown", (e) => {
       if (e.key === "Escape") {
         if (tourController.getStatus() === "running") {
           tourController.stop();
           this.tourBar.classList.add("sg-hidden");
         } else {
-          this.minimize();
+          this.closeChat();
         }
       }
     });
 
     // Mic button
     this.micBtn.addEventListener("click", () => this.toggleVoice());
+  }
+
+  // ==========================================
+  // INDEPENDENT VISIBILITY STATE MANAGEMENT
+  // ==========================================
+
+  public isChatOpen(): boolean {
+    return this.chatOpen;
+  }
+
+  public isAvatarVisible(): boolean {
+    return this.avatarVisible;
+  }
+
+  public openChat(): void {
+    this.chatOpen = true;
+    this.applyVisibilityState();
+  }
+
+  public closeChat(): void {
+    this.chatOpen = false;
+    this.applyVisibilityState();
+  }
+
+  public toggleChat(): void {
+    this.chatOpen = !this.chatOpen;
+    this.applyVisibilityState();
+  }
+
+  public showAvatar(): void {
+    this.avatarVisible = true;
+    this.applyVisibilityState();
+  }
+
+  public hideAvatar(): void {
+    this.avatarVisible = false;
+    this.applyVisibilityState();
+  }
+
+  public toggleAvatar(): void {
+    this.avatarVisible = !this.avatarVisible;
+    this.applyVisibilityState();
+  }
+
+  // Backward-compatible API aliases
+  public open(): void {
+    this.openChat();
+  }
+
+  public minimize(): void {
+    this.closeChat();
+  }
+
+  public hide(): void {
+    this.closeChat();
+  }
+
+  /**
+   * Applies the independent visibility states to the DOM and Three.js stage.
+   *
+   * State Matrix:
+   * 1. chatOpen = true,  avatarVisible = true  -> Both visible. Avatar beside chat (right: 414px).
+   * 2. chatOpen = false, avatarVisible = true  -> Chat hidden. Avatar glides to corner (right: 20px).
+   * 3. chatOpen = true,  avatarVisible = false -> Chat visible at corner. Avatar hidden (GPU paused).
+   * 4. chatOpen = false, avatarVisible = false -> Both hidden (GPU paused). Launcher button shown.
+   */
+  private applyVisibilityState(): void {
+    // 1. Avatar Layer & Canvas
+    if (this.avatarVisible) {
+      this.avatarLayer.classList.remove("sg-hidden");
+      this.avatarLayer.classList.toggle("beside-chat", this.chatOpen);
+      this.avatarLayer.classList.toggle("corner", !this.chatOpen);
+      if (this.stage) this.stage.resume();
+    } else {
+      this.avatarLayer.classList.add("sg-hidden");
+      if (this.stage) this.stage.pause();
+    }
+
+    // 2. Chat Panel
+    if (this.chatOpen) {
+      this.shell.classList.remove("sg-hidden");
+    } else {
+      this.shell.classList.add("sg-hidden");
+    }
+
+    // 3. Floating Launcher Button
+    if (!this.chatOpen && !this.avatarVisible) {
+      this.launcherBtn.classList.remove("sg-hidden");
+    } else {
+      this.launcherBtn.classList.add("sg-hidden");
+    }
+
+    // 4. Update Toggle Avatar Button icon styling
+    if (this.toggleAvatarBtn) {
+      this.toggleAvatarBtn.classList.toggle("active", this.avatarVisible);
+      this.toggleAvatarBtn.title = this.avatarVisible ? "Hide 3D Avatar" : "Show 3D Avatar";
+    }
   }
 
   private async handleSend(): Promise<void> {
@@ -205,16 +376,11 @@ export class WidgetView {
 
   private async toggleVoice(): Promise<void> {
     if (this.isRecording) {
-      // Stop recording
       this.isRecording = false;
       this.micBtn.classList.remove("recording");
       speechRecognizer.stop();
-      const blob = await microphoneController.stopRecording();
-      if (blob) {
-        // Can send audio to backend STT if browser recognition didn't fire
-      }
+      await microphoneController.stopRecording();
     } else {
-      // Start recording
       this.isRecording = true;
       this.micBtn.classList.add("recording");
       this.updateStatus("listening");
@@ -255,12 +421,42 @@ export class WidgetView {
 
   public updateMessages(messages: ChatMessage[]): void {
     this.messagesContainer.innerHTML = "";
+    let assistantMsgIndex = 0;
+
     messages.forEach((msg) => {
-      const el = document.createElement("div");
-      el.className = `sg-message ${msg.sender}`;
-      el.textContent = msg.text;
-      this.messagesContainer.appendChild(el);
+      const row = document.createElement("div");
+      row.className = `sg-message-item ${msg.sender}`;
+
+      if (msg.sender === "assistant") {
+        const dotColor = this.dotColors[assistantMsgIndex % this.dotColors.length];
+        assistantMsgIndex++;
+
+        const dot = document.createElement("div");
+        dot.className = "sg-msg-dot";
+        dot.style.background = dotColor;
+        dot.style.boxShadow = `0 0 8px ${dotColor}`;
+
+        const bubble = document.createElement("div");
+        bubble.className = "sg-bubble assistant";
+        bubble.textContent = msg.text;
+
+        row.appendChild(dot);
+        row.appendChild(bubble);
+      } else if (msg.sender === "user") {
+        const bubble = document.createElement("div");
+        bubble.className = "sg-bubble user";
+        bubble.textContent = msg.text;
+        row.appendChild(bubble);
+      } else {
+        const bubble = document.createElement("div");
+        bubble.className = "sg-bubble system";
+        bubble.textContent = msg.text;
+        row.appendChild(bubble);
+      }
+
+      this.messagesContainer.appendChild(row);
     });
+
     this.messagesContainer.scrollTop = this.messagesContainer.scrollHeight;
   }
 
@@ -274,24 +470,14 @@ export class WidgetView {
     }
 
     const labels: Record<AssistantState, string> = {
-      idle: "AI Guide",
-      listening: "Listening...",
-      thinking: "Thinking...",
-      speaking: "Speaking...",
-      tour: "Page Tour",
-      error: "Error",
+      idle: "AI Guide: Ready",
+      listening: "AI Guide: Listening...",
+      thinking: "AI Guide: Thinking...",
+      speaking: "AI Guide: Speaking...",
+      tour: "AI Guide: Page Tour",
+      error: "AI Guide: Error",
     };
-    this.statusText.textContent = labels[state] || "AI Guide";
-
-    // Toggle stop speaking control
-    const stopSpeechBtn = this.shadowRoot.getElementById("sg-btn-stop-speech");
-    if (stopSpeechBtn) {
-      if (state === "speaking") {
-        stopSpeechBtn.classList.remove("sg-hidden");
-      } else {
-        stopSpeechBtn.classList.add("sg-hidden");
-      }
-    }
+    this.statusIndicator.title = labels[state] || "AI Guide: Ready";
 
     // Show / hide tour toolbar
     if (tourController.getStatus() === "running") {
@@ -301,23 +487,4 @@ export class WidgetView {
       this.tourBar.classList.add("sg-hidden");
     }
   }
-
-  public minimize(): void {
-    this.isMinimized = true;
-    this.shell.classList.add("sg-hidden");
-    this.launcherBtn.classList.remove("sg-hidden");
-    if (this.stage) this.stage.pause();
-  }
-
-  public open(): void {
-    this.isMinimized = false;
-    this.shell.classList.remove("sg-hidden");
-    this.launcherBtn.classList.add("sg-hidden");
-    if (this.stage) this.stage.resume();
-  }
-
-  public hide(): void {
-    this.minimize();
-  }
 }
-

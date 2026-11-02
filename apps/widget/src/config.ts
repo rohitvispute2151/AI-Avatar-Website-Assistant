@@ -9,6 +9,9 @@ export interface WidgetError {
   details?: unknown;
 }
 
+export type AvatarQuality = "auto" | "low" | "high";
+export type CameraFraming = "bust" | "full";
+
 export interface SiteGuideConfig {
   widgetId: string;              // Public integration identifier, never a secret
   apiBaseUrl: string;
@@ -16,7 +19,15 @@ export interface SiteGuideConfig {
   locale?: string;               // e.g. "en-US"
   voiceEnabled?: boolean;
   textEnabled?: boolean;
-  avatarAssetUrl?: string;
+  avatarVisible?: boolean;       // Initial avatar visibility state (default: true)
+  chatOpen?: boolean;            // Initial chat window state (default: true)
+  avatarAssetUrl?: string;       // Custom .glb or .vrm model
+  avatarHdriUrl?: string;        // Custom 1k .hdr studio environment
+  avatarAnimationsUrl?: string;  // Custom animation .glb
+  voice?: string;                // Preferred voice name hint
+  quality?: AvatarQuality;       // "auto" (default) | "low" | "high"
+  cameraFraming?: CameraFraming; // "bust" (default) | "full"
+  assetBaseUrl?: string;         // Base CDN or local asset path
   theme?: "light" | "dark" | "auto";
   zIndex?: number;
   onReady?: () => void;
@@ -29,6 +40,14 @@ export interface WidgetHandle {
   minimize(): void;
   hide(): void;
   setVoiceEnabled(enabled: boolean): void;
+  openChat(): void;
+  closeChat(): void;
+  toggleChat(): void;
+  showAvatar(): void;
+  hideAvatar(): void;
+  toggleAvatar(): void;
+  isChatOpen(): boolean;
+  isAvatarVisible(): boolean;
 }
 
 export function validateConfig(config: SiteGuideConfig): SiteGuideConfig {
@@ -53,9 +72,12 @@ export function validateConfig(config: SiteGuideConfig): SiteGuideConfig {
     locale: "en-US",
     voiceEnabled: true,
     textEnabled: true,
+    avatarVisible: config.avatarVisible !== undefined ? config.avatarVisible : true,
+    chatOpen: config.chatOpen !== undefined ? config.chatOpen : true,
+    quality: "auto",
+    cameraFraming: "bust",
     theme: "dark",
     zIndex: 999999,
     ...config,
   };
 }
-
