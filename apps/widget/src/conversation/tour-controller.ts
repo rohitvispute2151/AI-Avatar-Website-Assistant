@@ -63,13 +63,15 @@ export class TourController {
   }
 
   public stop(): void {
-    this.status = "stopped";
+    this.status = "idle";
     this.steps = [];
     this.currentIndex = -1;
   }
 
   private complete(): void {
-    this.status = "completed";
+    this.status = "idle";
+    this.steps = [];
+    this.currentIndex = -1;
     if (this.onComplete) {
       this.onComplete();
     }

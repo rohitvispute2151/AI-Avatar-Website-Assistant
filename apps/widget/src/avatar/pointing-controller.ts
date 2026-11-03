@@ -43,6 +43,7 @@ export class PointingController {
   private isSpeaking = false;
   private isExplaining = false;
   private speechEnergy = 0;
+  private pointingDuration = 0;
 
   // Smoothed screen aim coords for direct inter-target blending
   private currentAimX = 0;
@@ -91,28 +92,11 @@ export class PointingController {
 
     if (isOffscreen) {
       this.pointingSide = "none";
-      // Fall back to two-handed presenting
       this.targetWeight = this.isSpeaking || this.isExplaining ? 1.0 : 0.0;
       return { isEdgeCase: true, fallbackGesture: "explain" };
     }
 
-    // 2. Edge Case: Behind chat box
-    if (chatShellEl) {
-      const chatRect = chatShellEl.getBoundingClientRect();
-      const overlapsChat = !(
-        targetRect.right < chatRect.left ||
-        targetRect.left > chatRect.right ||
-        targetRect.bottom < chatRect.top ||
-        targetRect.top > chatRect.bottom
-      );
-      if (overlapsChat) {
-        this.pointingSide = "none";
-        this.targetWeight = this.isSpeaking || this.isExplaining ? 1.0 : 0.0;
-        return { isEdgeCase: true, fallbackGesture: "explain" };
-      }
-    }
-
-    // 3. Compute relative vector from avatar chest/shoulder center
+    // 2. Compute relative vector from avatar chest/shoulder center
     const avatarRect = avatarLayerEl
       ? avatarLayerEl.getBoundingClientRect()
       : {
@@ -132,14 +116,14 @@ export class PointingController {
     const dy = targetCenterY - avatarShoulderY;
     const dist = Math.hypot(dx, dy);
 
-    // 4. Edge Case: Very close to avatar
-    if (dist < 75) {
+    // Edge Case: target center is too close to avatar chest/shoulder (< 60px)
+    if (dist < 60) {
       this.pointingSide = "none";
       this.targetWeight = this.isSpeaking || this.isExplaining ? 1.0 : 0.0;
       return { isEdgeCase: true, fallbackGesture: "explain" };
     }
 
-    // Valid target: choose closest arm and aim
+    // Nearest arm aims toward target center
     this.targetAimX = dx;
     this.targetAimY = dy;
     this.pointingSide = dx < 0 ? "left" : "right";
@@ -154,6 +138,39 @@ export class PointingController {
     };
 
     return { isEdgeCase: false };
+  }
+
+  /**
+   * Continuously updates pointing aim during scrolling, resizing, or avatar translation.
+   */
+  public updateAim(targetRect: DOMRect, avatarLayerEl?: HTMLElement | null): void {
+    if (!targetRect) return;
+    this.targetRect = targetRect;
+    const avatarRect = avatarLayerEl
+      ? avatarLayerEl.getBoundingClientRect()
+      : {
+          left: window.innerWidth - 320,
+          top: window.innerHeight - 560,
+          width: 290,
+          height: 550,
+        };
+
+    const avatarCenterX = avatarRect.left + avatarRect.width * 0.5;
+    const avatarShoulderY = avatarRect.top + avatarRect.height * 0.28;
+
+    const targetCenterX = targetRect.left + targetRect.width * 0.5;
+    const targetCenterY = targetRect.top + targetRect.height * 0.5;
+
+    this.targetAimX = targetCenterX - avatarCenterX;
+    this.targetAimY = targetCenterY - avatarShoulderY;
+    this.pointingSide = this.targetAimX < 0 ? "left" : "right";
+
+    const normX = (targetCenterX - window.innerWidth * 0.5) / (window.innerWidth * 0.5);
+    const normY = (targetCenterY - window.innerHeight * 0.5) / (window.innerHeight * 0.5);
+    this.lookAtScreen = {
+      x: Math.max(-1, Math.min(1, normX)),
+      y: Math.max(-1, Math.min(1, normY)),
+    };
   }
 
   public clearTarget(): void {
@@ -255,12 +272,22 @@ export class PointingController {
     if (this.pointingSide !== "none" && this.targetRect) {
       // -------------------------------------------------------------
       // POINTING MODE: Nearest arm points, other arm supports at waist
+      // Broad Section Sweeping: If section is wide (>300px), transition
+      // from direct point to gentle open-palm sweep across section width
       // -------------------------------------------------------------
+      this.pointingDuration += delta;
+      if (this.targetRect.width > 300 && this.pointingDuration > 1.4) {
+        const sweepPhase = (this.pointingDuration - 1.4) * 1.6;
+        const sweepSpan = Math.min(140, this.targetRect.width * 0.20);
+        const sweepX = Math.sin(sweepPhase) * sweepSpan;
+        this.currentAimX += sweepX * delta * 2.5;
+      }
       this.computePointingPose(time);
     } else {
       // -------------------------------------------------------------
       // TWO-HANDED PRESENTING MODE: Explaining / Speaking without target
       // -------------------------------------------------------------
+      this.pointingDuration = 0;
       this.computePresentingPose(time);
     }
 

@@ -60,10 +60,12 @@ export const widgetStyles = `
   height: min(550px, calc(100vh - 16px));
   pointer-events: none;
   overflow: visible;
+  transform-origin: bottom center;
+  transform: scale(var(--avatar-scale, 1));
   transition: right 0.4s cubic-bezier(0.16, 1, 0.3, 1), 
               bottom 0.4s cubic-bezier(0.16, 1, 0.3, 1), 
               opacity 0.28s ease, 
-              transform 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+              transform 0.4s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 /* Beside chat when chat is OPEN */
@@ -92,8 +94,7 @@ export const widgetStyles = `
   display: block;
   width: 100% !important;
   height: 100% !important;
-  pointer-events: auto;
-  cursor: pointer;
+  pointer-events: none; /* Empty canvas space lets page clicks through to background controls */
 }
 
 /* Speech hint bubble on avatar when chat is closed */
@@ -135,14 +136,112 @@ export const widgetStyles = `
 }
 
 /* =============================================
-   3. CHAT PANEL (RIGHT SIDE)
-   Independent layer (z-index: 999995)
+   3. FLOATING ACTION DOCK (AI GUIDE + MIC + CHAT)
+   Always docked at bottom-right (z-index: 1000005)
+   ============================================= */
+.sg-dock-bar {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  z-index: 1000005;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  pointer-events: auto;
+  user-select: none;
+}
+
+.sg-dock-guide-btn {
+  background: linear-gradient(135deg, #4f46e5 0%, #06b6d4 100%);
+  color: #ffffff;
+  border: none;
+  border-radius: 9999px;
+  height: 46px;
+  padding: 0 18px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  box-shadow: 0 10px 25px -5px rgba(79, 70, 229, 0.5), 0 8px 10px -6px rgba(79, 70, 229, 0.4);
+  font-weight: 600;
+  font-size: 14px;
+  transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.2s ease, opacity 0.2s ease, background 0.2s ease;
+  white-space: nowrap;
+  flex-shrink: 0;
+  outline: none;
+}
+
+.sg-dock-guide-btn:hover {
+  transform: translateY(-2px) scale(1.03);
+  box-shadow: 0 14px 30px -5px rgba(79, 70, 229, 0.65);
+}
+
+.sg-dock-guide-btn:active {
+  transform: translateY(0) scale(0.98);
+}
+
+.sg-dock-guide-btn.inactive {
+  background: linear-gradient(135deg, #3730a3 0%, #0284c7 100%);
+  box-shadow: 0 10px 25px -5px rgba(55, 48, 163, 0.5);
+  opacity: 0.95;
+}
+
+.sg-dock-btn {
+  background: rgba(15, 23, 42, 0.85);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  color: #f1f5f9;
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.05);
+  flex-shrink: 0;
+  outline: none;
+  padding: 0;
+}
+
+.sg-dock-btn:hover {
+  background: rgba(30, 41, 59, 0.95);
+  border-color: rgba(99, 102, 241, 0.6);
+  color: #ffffff;
+  transform: translateY(-2px) scale(1.06);
+  box-shadow: 0 14px 30px rgba(0, 0, 0, 0.6), 0 0 16px rgba(99, 102, 241, 0.35);
+}
+
+.sg-dock-btn:active {
+  transform: translateY(0) scale(0.96);
+}
+
+.sg-dock-btn.recording {
+  background: #ef4444 !important;
+  border-color: #f87171 !important;
+  color: #ffffff !important;
+  box-shadow: 0 0 24px rgba(239, 68, 68, 0.8) !important;
+  animation: sg-pulse 0.8s infinite;
+}
+
+.sg-dock-btn.active {
+  background: linear-gradient(135deg, #4f46e5 0%, #06b6d4 100%) !important;
+  border-color: rgba(255, 255, 255, 0.4) !important;
+  color: #ffffff !important;
+  box-shadow: 0 10px 25px rgba(79, 70, 229, 0.5) !important;
+}
+
+/* =============================================
+   4. CHAT PANEL (RIGHT SIDE, FLOATS ABOVE DOCK)
+   Independent layer (z-index: 1000000)
    ============================================= */
 .sg-chat-panel {
   position: fixed;
-  bottom: 16px;
+  bottom: 78px;
   right: 20px;
-  z-index: 999995;
+  z-index: 1000000;
   width: 384px;
   max-width: calc(100vw - 32px);
   display: flex;
@@ -199,16 +298,33 @@ export const widgetStyles = `
   color: #ffffff;
 }
 
-/* Tour Toolbar */
+/* Tour Toolbar (Floats above dock ONLY during active guided tours) */
 .sg-tour-bar {
+  position: fixed;
+  bottom: 78px;
+  right: 20px;
+  z-index: 1000002;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 6px 12px;
-  background: rgba(79, 70, 229, 0.25);
-  border: 1px solid rgba(79, 70, 229, 0.4);
-  border-radius: 12px;
-  font-size: 12px;
+  gap: 14px;
+  padding: 8px 18px;
+  background: rgba(16, 24, 40, 0.94);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 9999px;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.55);
+  color: #f1f5f9;
+  font-size: 13px;
+  font-weight: 500;
+  pointer-events: auto;
+  user-select: none;
+  transition: opacity 0.25s ease, transform 0.25s ease;
+}
+
+.sg-tour-bar.sg-hidden {
+  display: none !important;
 }
 
 .sg-tour-controls {
@@ -325,7 +441,7 @@ export const widgetStyles = `
   -webkit-backdrop-filter: blur(20px);
   border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 9999px;
-  padding: 6px 14px 6px 6px;
+  padding: 6px 12px 6px 6px;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -416,6 +532,7 @@ export const widgetStyles = `
   align-items: center;
   gap: 6px;
   flex-shrink: 0;
+  padding-right: 4px;
 }
 
 .sg-action-icon {

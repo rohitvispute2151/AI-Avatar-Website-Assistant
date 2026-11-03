@@ -25,16 +25,16 @@ test("SiteGuideConfig: supports independent avatarVisible and chatOpen options",
     apiBaseUrl: "http://localhost:8000",
   });
   assert.equal(defaultConf.avatarVisible, true);
-  assert.equal(defaultConf.chatOpen, true);
+  assert.equal(defaultConf.chatOpen, false);
 
   const customConf = validateConfig({
     widgetId: "test-w",
     apiBaseUrl: "http://localhost:8000",
     avatarVisible: false,
-    chatOpen: false,
+    chatOpen: true,
   });
   assert.equal(customConf.avatarVisible, false);
-  assert.equal(customConf.chatOpen, false);
+  assert.equal(customConf.chatOpen, true);
 });
 
 test("calculateAvatarAnchor: calculates safe placement avoiding bottom-right chat dock", () => {
@@ -277,11 +277,233 @@ test("NodeRegistry: generates stable unique IDs and handles registration", () =>
     tagName: "BUTTON",
     id: "cta-btn",
     getAttribute: () => null,
-    setAttribute: () => {},
+    setAttribute: () => { },
     isConnected: true,
   } as any;
 
   const id1 = registry.getOrCreateId(el1, "button");
   assert.ok(id1.startsWith("node_button_cta-btn"));
   assert.equal(registry.resolve(id1), el1);
+});
+
+test("calculateAvatarAnchor: dynamically docks away from target and scales footprint", () => {
+  const { calculateAvatarAnchor } = require("../src/navigation/anchor-layout");
+  global.window = { innerWidth: 1280, innerHeight: 720 } as any;
+
+  // 1. Full-width Hero section (width > 60% viewport)
+  const heroRect = {
+    left: 200,
+    right: 1080,
+    top: 140,
+    bottom: 500,
+    width: 880,
+    height: 360,
+  } as DOMRect;
+
+  const heroAnchor = calculateAvatarAnchor(heroRect, 290, 550, 24, true);
+  // Must dock on the LEFT viewport margin
+  assert.equal(heroAnchor.x, 24);
+  assert.equal(heroAnchor.side, "left");
+  // Scaled down footprint for wide target (0.75 or 0.70 depending on clearance)
+  assert.ok(heroAnchor.scale <= 0.75 && heroAnchor.scale >= 0.70);
+  // Grounded at viewport bottom
+  assert.ok(heroAnchor.y >= 720 - Math.round(550 * 0.75) - 24);
+
+  // 2. Right-side pricing card
+  const rightCardRect = {
+    left: 800,
+    right: 1100,
+    top: 200,
+    bottom: 600,
+    width: 300,
+    height: 400,
+  } as DOMRect;
+
+  const rightAnchor = calculateAvatarAnchor(rightCardRect, 290, 550, 24, true);
+  // Must dock on LEFT away from target and chat
+  assert.equal(rightAnchor.x, 24);
+  assert.equal(rightAnchor.side, "left");
+
+  // 3. Mobile viewport (< 768px)
+  global.window = { innerWidth: 480, innerHeight: 800 } as any;
+  const mobileAnchor = calculateAvatarAnchor(heroRect, 290, 550, 16, true);
+  assert.equal(mobileAnchor.scale, 0.65);
+});
+
+test("findSectionForPlan: resolves semantic sections from answer intent", () => {
+  const { findSectionForPlan } = require("../src/navigation/target-resolver");
+  const heroEl = { id: "hero", tagName: "SECTION", isConnected: true, getBoundingClientRect: () => ({ width: 800, height: 400, top: 100, bottom: 500, left: 240, right: 1040 }) };
+  global.document = {
+    getElementById: (id: string) => (id === "hero" ? heroEl : null),
+    querySelector: () => null,
+  } as any;
+
+  const resolved = findSectionForPlan({
+    turnId: "t1",
+    intent: "answer",
+    answer: "NovaAI builds 3D avatar guides that turn static websites into an interactive spatial journey.",
+    gesture: "explain",
+    steps: [],
+    evidence: [],
+    confidence: 0.95,
+    pageRevision: 1,
+    shouldSpeak: true,
+  });
+
+  assert.equal(resolved, heroEl);
+});
+
+test("Tour Steps: Asserts zero rect intersection with target and chat panel across desktop, laptop, and mobile", () => {
+  const { calculateAvatarAnchor } = require("../src/navigation/anchor-layout");
+
+  function hasOverlap(r1: any, r2: any): boolean {
+    return !(
+      r1.right <= r2.left ||
+      r1.left >= r2.right ||
+      r1.bottom <= r2.top ||
+      r1.top >= r2.bottom
+    );
+  }
+
+  const viewports = [
+    { name: "Desktop 1920x1080", width: 1920, height: 1080 },
+    { name: "Laptop 1366x768", width: 1366, height: 768 },
+  ];
+
+  for (const vp of viewports) {
+    global.window = { innerWidth: vp.width, innerHeight: vp.height } as any;
+
+    // Compact chat panel in explaining mode (e.g. tour bar at bottom-right)
+    const chatRect = {
+      left: vp.width - 240,
+      right: vp.width - 20,
+      top: vp.height - 60,
+      bottom: vp.height - 20,
+      width: 220,
+      height: 40,
+    } as DOMRect;
+
+    // Tour Steps:
+    const heroLeft = Math.round((vp.width - 900) / 2);
+    const heroTarget = {
+      left: heroLeft,
+      right: heroLeft + 900,
+      top: 100,
+      bottom: 500,
+      width: 900,
+      height: 400,
+    } as DOMRect;
+
+    const featLeft = Math.round((vp.width - 860) / 2);
+    const featuresTarget = {
+      left: featLeft,
+      right: featLeft + 860,
+      top: 90,
+      bottom: 520,
+      width: 860,
+      height: 430,
+    } as DOMRect;
+
+    const priceLeft = Math.round((vp.width - 860) / 2);
+    const pricingTarget = {
+      left: priceLeft,
+      right: priceLeft + 860,
+      top: 100,
+      bottom: 580,
+      width: 860,
+      height: 480,
+    } as DOMRect;
+
+    const contactLeft = Math.round((vp.width - 700) / 2);
+    const contactTarget = {
+      left: contactLeft,
+      right: contactLeft + 700,
+      top: 100,
+      bottom: 550,
+      width: 700,
+      height: 450,
+    } as DOMRect;
+
+    const tourTargets = [
+      { name: "Step 1: Hero", rect: heroTarget },
+      { name: "Step 2: Features", rect: featuresTarget },
+      { name: "Step 3: Pricing", rect: pricingTarget },
+      { name: "Step 4: Contact", rect: contactTarget },
+    ];
+
+    for (const step of tourTargets) {
+      const anchor = calculateAvatarAnchor(step.rect, 290, 550, 20, true, chatRect);
+      const effW = Math.round(290 * anchor.scale);
+      const effH = Math.round(550 * anchor.scale);
+      const avatarRect = {
+        left: anchor.x,
+        right: anchor.x + effW,
+        top: anchor.y,
+        bottom: anchor.y + effH,
+      };
+
+      // 1. Assert zero overlap with target
+      const overlapsTarget = hasOverlap(avatarRect, step.rect);
+      assert.equal(
+        overlapsTarget,
+        false,
+        `${vp.name} - ${step.name}: Avatar intersects target! Avatar: [${avatarRect.left}, ${avatarRect.right}], Target: [${step.rect.left}, ${step.rect.right}]`
+      );
+
+      // 2. Assert zero overlap with chat bar
+      const overlapsChat = hasOverlap(avatarRect, chatRect);
+      assert.equal(
+        overlapsChat,
+        false,
+        `${vp.name} - ${step.name}: Avatar intersects chat panel! Avatar: [${avatarRect.left}, ${avatarRect.right}], Chat: [${chatRect.left}, ${chatRect.right}]`
+      );
+
+      // 3. Assert head and feet are fully inside viewport with padding
+      assert.ok(avatarRect.top >= 10, `${vp.name} - ${step.name}: Head cut off at top (y=${avatarRect.top})`);
+      assert.ok(avatarRect.bottom <= vp.height, `${vp.name} - ${step.name}: Feet cut off at bottom (bottom=${avatarRect.bottom}, vpHeight=${vp.height})`);
+    }
+  }
+});
+
+test("TourController: resets state and status to idle on stop and completion", () => {
+  const { TourController } = require("../src/conversation/tour-controller");
+  const controller = new TourController();
+
+  let completed = false;
+  controller.start(
+    [
+      { targetNodeId: "hero", spokenText: "Hero", gesture: "open_palm", stepKind: "section" },
+      { targetNodeId: "features", spokenText: "Features", gesture: "open_palm", stepKind: "section" },
+    ],
+    () => { },
+    () => {
+      completed = true;
+    }
+  );
+
+  assert.equal(controller.getStatus(), "running");
+  assert.equal(controller.getCurrentIndex(), 0);
+
+  // Advance to next step
+  controller.next();
+  assert.equal(controller.getCurrentIndex(), 1);
+
+  // Advance past last step -> complete
+  controller.next();
+  assert.equal(completed, true);
+  assert.equal(controller.getStatus(), "idle");
+  assert.equal(controller.getCurrentIndex(), -1);
+  assert.equal(controller.getTotalSteps(), 0);
+
+  // Test stop()
+  controller.start(
+    [{ targetNodeId: "hero", spokenText: "Hero", gesture: "open_palm", stepKind: "section" }],
+    () => { },
+    () => { }
+  );
+  assert.equal(controller.getStatus(), "running");
+  controller.stop();
+  assert.equal(controller.getStatus(), "idle");
+  assert.equal(controller.getCurrentIndex(), -1);
+  assert.equal(controller.getTotalSteps(), 0);
 });

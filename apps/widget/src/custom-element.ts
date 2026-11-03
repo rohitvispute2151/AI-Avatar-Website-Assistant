@@ -104,7 +104,9 @@ export class SiteGuideElement extends HTMLElement {
       this.highlighter,
       config.locale || "en-US",
       () => this.widgetView?.updateStatus("speaking"),
-      () => this.widgetView?.updateStatus("idle")
+      () => this.widgetView?.updateStatus("idle"),
+      (explaining: boolean) => this.widgetView?.setExplainingMode(explaining),
+      () => this.widgetView?.getChatRect() || null
     );
     this.chatController.setActionExecutor(this.actionExecutor);
 

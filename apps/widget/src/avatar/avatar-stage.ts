@@ -57,6 +57,7 @@ export class AvatarStage {
   private loadingOverlay: HTMLElement | null = null;
   private progressBar: HTMLElement | null = null;
   private progressText: HTMLElement | null = null;
+  private lastTargetRect: DOMRect | null = null;
 
   constructor(container: HTMLElement, options: AvatarStageOptions = {}) {
     this.container = container;
@@ -125,7 +126,10 @@ export class AvatarStage {
     // 8. Bind Pointer Gaze Tracking
     this.bindGazeTracking();
 
-    // 9. Start Render Loop
+    // 9. Setup avatar mesh raycaster click listener
+    this.setupAvatarClickListener();
+
+    // 10. Start Render Loop
     this.startLoop();
   }
 
@@ -294,9 +298,9 @@ export class AvatarStage {
     const tanHalf = Math.tan(fovY / 2);
     const aspect = Math.max(0.2, width / Math.max(1, height));
     // Safe framing margins for avatar:
-    // Hands span ~1.0m (Xmax = 0.65m with safe margin), height ~1.70m (Ymax = 1.08m from center 0.864)
-    const Xmax = 0.65;
-    const Ymax = 1.08;
+    // Hands span ~1.0m (Xmax = 0.72m with safe margin), height ~1.72m (Ymax = 1.15m from center 0.88)
+    const Xmax = 0.72;
+    const Ymax = 1.15;
     const zForHeight = Ymax / tanHalf;
     const zForWidth = Xmax / (tanHalf * aspect);
     return Math.max(zForHeight, zForWidth);
@@ -430,14 +434,18 @@ export class AvatarStage {
   }
 
   public pointAt(targetRect: DOMRect | null): void {
+    this.lastTargetRect = targetRect;
     if (!this.rig || !this.rig.pointAt) return;
     const avatarEl = (this.container.closest(".sg-avatar-layer") as HTMLElement) || this.container.parentElement;
     const rootNode = this.container.getRootNode() as Document | ShadowRoot;
-    const chatEl = rootNode?.querySelector ? (rootNode.querySelector(".sg-chat-shell") as HTMLElement | null) : null;
+    const chatEl = rootNode?.querySelector
+      ? ((rootNode.querySelector(".sg-chat-panel") || rootNode.querySelector("#sg-shell")) as HTMLElement | null)
+      : null;
     this.rig.pointAt(targetRect, avatarEl, chatEl);
   }
 
   public stopPointing(): void {
+    this.lastTargetRect = null;
     if (!this.rig || !this.rig.stopPointing) return;
     this.rig.stopPointing();
   }
@@ -446,7 +454,38 @@ export class AvatarStage {
     this.rig?.facialController.setEmotion(emotion);
   }
 
-  public async moveToAnchor(anchor: AvatarAnchor, durationMs: number = 700): Promise<void> {
+  private setupAvatarClickListener(): void {
+    const raycaster = new THREE.Raycaster();
+    const mouse = new THREE.Vector2();
+
+    const handlePointerDown = (e: MouseEvent) => {
+      if (!this.renderer || !this.rig) return;
+      const canvas = this.renderer.domElement;
+      const rect = canvas.getBoundingClientRect();
+      if (
+        e.clientX >= rect.left &&
+        e.clientX <= rect.right &&
+        e.clientY >= rect.top &&
+        e.clientY <= rect.bottom
+      ) {
+        mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+        mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+        raycaster.setFromCamera(mouse, this.camera);
+        const intersects = raycaster.intersectObjects(this.rig.root.children, true);
+        if (intersects.length > 0) {
+          const rootNode = this.container.getRootNode() as ShadowRoot | Document;
+          const tapHint = rootNode?.getElementById ? rootNode.getElementById("sg-avatar-tap-hint") : null;
+          if (tapHint) {
+            tapHint.click();
+          }
+        }
+      }
+    };
+
+    window.addEventListener("pointerdown", handlePointerDown, { passive: true });
+  }
+
+  public async moveToAnchor(anchor: AvatarAnchor, durationMs: number = 650): Promise<void> {
     const avatarEl = (this.container.closest(".sg-avatar-layer") as HTMLElement) || this.container.parentElement;
     if (!avatarEl) return;
 
@@ -455,10 +494,16 @@ export class AvatarStage {
       this.rig.animController.setLocomotion("walk");
     }
 
-    const startX = avatarEl.getBoundingClientRect().left;
-    const startY = avatarEl.getBoundingClientRect().top;
+    const currentRect = avatarEl.getBoundingClientRect();
+    const startX = currentRect.left;
+    const startY = currentRect.top;
     const targetX = anchor.x;
     const targetY = anchor.y;
+
+    const rawScale = parseFloat(avatarEl.style.getPropertyValue("--avatar-scale") || "1.0");
+    const startScale = isNaN(rawScale) ? 1.0 : rawScale;
+    const targetScale = anchor.scale ?? 0.85;
+
     const startTime = performance.now();
 
     return new Promise<void>((resolve) => {
@@ -473,19 +518,33 @@ export class AvatarStage {
 
         const currentX = startX + (targetX - startX) * ease;
         const currentY = startY + (targetY - startY) * ease;
+        const currentScale = startScale + (targetScale - startScale) * ease;
 
         const stageW = avatarEl.offsetWidth || 290;
         const stageH = avatarEl.offsetHeight || 550;
         const margin = 16;
-        const maxX = Math.max(margin, window.innerWidth - stageW - margin);
-        const maxY = Math.max(margin, window.innerHeight - stageH - margin);
+        const maxX = Math.max(margin, window.innerWidth - stageW * currentScale - margin);
         const clampedX = Math.max(margin, Math.min(currentX, maxX));
-        const clampedY = Math.max(margin, Math.min(currentY, maxY));
 
-        avatarEl.style.left = `${clampedX}px`;
-        avatarEl.style.top = `${clampedY}px`;
+        avatarEl.style.left = `${Math.round(clampedX)}px`;
         avatarEl.style.right = "auto";
-        avatarEl.style.bottom = "auto";
+        avatarEl.style.setProperty("--avatar-scale", currentScale.toFixed(3));
+
+        if (anchor.useBottomAnchor || anchor.side !== "top") {
+          // Bottom grounding guarantees feet and shoes are 100% inside viewport
+          avatarEl.style.bottom = "16px";
+          avatarEl.style.top = "auto";
+        } else {
+          const maxY = Math.max(margin, window.innerHeight - stageH * currentScale - margin);
+          const clampedY = Math.max(margin, Math.min(currentY, maxY));
+          avatarEl.style.top = `${Math.round(clampedY)}px`;
+          avatarEl.style.bottom = "auto";
+        }
+
+        // Dynamically recompute pointing direction as the avatar walks
+        if (this.lastTargetRect) {
+          this.pointAt(this.lastTargetRect);
+        }
 
         if (progress < 1.0) {
           requestAnimationFrame(step);
@@ -493,13 +552,6 @@ export class AvatarStage {
           this.isMoving = false;
           if (this.rig) {
             this.rig.animController.setLocomotion("idle");
-            if (anchor.side === "left") {
-              this.rig.animController.setGesture("point_right");
-            } else if (anchor.side === "right") {
-              this.rig.animController.setGesture("point_left");
-            } else {
-              this.rig.animController.setGesture("explain");
-            }
           }
           resolve();
         }
@@ -508,13 +560,76 @@ export class AvatarStage {
     });
   }
 
-  public returnToDock(): void {
+  public async returnToDock(durationMs: number = 600): Promise<void> {
     const avatarEl = (this.container.closest(".sg-avatar-layer") as HTMLElement) || this.container.parentElement;
     if (!avatarEl) return;
-    avatarEl.style.left = "";
-    avatarEl.style.top = "";
-    avatarEl.style.right = "";
-    avatarEl.style.bottom = "";
+
+    if (!avatarEl.style.left && !avatarEl.style.top) {
+      return;
+    }
+
+    const currentRect = avatarEl.getBoundingClientRect();
+    const startX = currentRect.left;
+    const startY = currentRect.top;
+
+    const rootNode = this.container.getRootNode() as Document | ShadowRoot;
+    const chatPanel = rootNode?.querySelector
+      ? ((rootNode.querySelector(".sg-chat-panel") || rootNode.querySelector("#sg-shell")) as HTMLElement | null)
+      : null;
+    const isChatOpen = chatPanel ? !chatPanel.classList.contains("sg-hidden") : true;
+
+    const stageW = avatarEl.offsetWidth || 290;
+    const stageH = avatarEl.offsetHeight || 550;
+    const defaultRight = isChatOpen ? 414 : 20;
+    const targetX = window.innerWidth - defaultRight - stageW;
+    const targetY = window.innerHeight - stageH;
+
+    const rawScale = parseFloat(avatarEl.style.getPropertyValue("--avatar-scale") || "1.0");
+    const startScale = isNaN(rawScale) ? 1.0 : rawScale;
+    const targetScale = 1.0;
+
+    this.isMoving = true;
+    if (this.rig) {
+      this.rig.animController.setLocomotion("walk");
+    }
+
+    const startTime = performance.now();
+
+    return new Promise<void>((resolve) => {
+      const step = (now: number) => {
+        const elapsed = now - startTime;
+        const progress = Math.min(1.0, elapsed / durationMs);
+
+        const ease =
+          progress < 0.5
+            ? 4 * progress * progress * progress
+            : 1 - Math.pow(-2 * progress + 2, 3) / 2;
+
+        const currentX = startX + (targetX - startX) * ease;
+        const currentY = startY + (targetY - startY) * ease;
+        const currentScale = startScale + (targetScale - startScale) * ease;
+
+        avatarEl.style.left = `${Math.round(currentX)}px`;
+        avatarEl.style.top = `${Math.round(currentY)}px`;
+        avatarEl.style.setProperty("--avatar-scale", currentScale.toFixed(3));
+
+        if (progress < 1.0) {
+          requestAnimationFrame(step);
+        } else {
+          this.isMoving = false;
+          if (this.rig) {
+            this.rig.animController.setLocomotion("idle");
+          }
+          avatarEl.style.left = "";
+          avatarEl.style.top = "";
+          avatarEl.style.right = "";
+          avatarEl.style.bottom = "";
+          avatarEl.style.removeProperty("--avatar-scale");
+          resolve();
+        }
+      };
+      requestAnimationFrame(step);
+    });
   }
 
   public getFPS(): number {

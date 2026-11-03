@@ -16,7 +16,7 @@ export class WidgetView {
   private stage: AvatarStage | null = null;
 
   // DOM Elements
-  private launcherBtn!: HTMLElement;
+  private launcherBtn: HTMLElement | null = null;
   private avatarLayer!: HTMLElement;
   private canvasWrap!: HTMLElement;
   private shell!: HTMLElement;
@@ -28,10 +28,14 @@ export class WidgetView {
   private tourBar!: HTMLElement;
   private tourInfo!: HTMLElement;
   private toggleAvatarBtn: HTMLElement | null = null;
+  private dockBar!: HTMLElement;
+  private dockGuideBtn!: HTMLElement;
+  private dockMicBtn!: HTMLElement;
+  private dockChatBtn!: HTMLElement;
 
-  // Independent Visibility States
+  // Independent Visibility States (Default: Chat closed, operates with recorder only)
   private avatarVisible: boolean = true;
-  private chatOpen: boolean = true;
+  private chatOpen: boolean = false;
   private isRecording: boolean = false;
 
   private dotColors = [
@@ -74,23 +78,49 @@ export class WidgetView {
     root.className = "site-guide-root";
 
     root.innerHTML = `
-      <!-- Launcher Button (shown only when BOTH chat is closed AND avatar is hidden) -->
-      <button class="sg-launcher-btn sg-hidden" id="sg-launcher" aria-label="Open AI Website Guide">
-        <span>✨</span>
-        <span>AI Website Guide</span>
-      </button>
-
       <!-- Independent 3D Avatar Layer (Rendered in front of chat, z-index: 1000000) -->
       <div class="sg-avatar-layer beside-chat" id="sg-avatar-layer">
         <div class="sg-avatar-canvas-wrap" id="sg-avatar-wrap" role="presentation" aria-hidden="true"></div>
-        <div class="sg-avatar-tap-hint" id="sg-avatar-tap-hint" title="Click to chat with Ava">
+      </div>
+
+      <!-- Floating Dock (AI Guide Button + Audio Recorder + Chat Toggle) -->
+      <div class="sg-dock-bar" id="sg-dock-bar">
+        <!-- AI Guide Button (Visible by default; toggles avatar; when avatar hidden, mic/chat hide) -->
+        <button class="sg-dock-guide-btn" id="sg-dock-guide" title="Toggle AI Guide Avatar" aria-label="Toggle AI Guide Avatar">
           <span>✨</span>
-          <span>Ask Ava</span>
+          <span>AI Guide</span>
+        </button>
+
+        <!-- Audio Recorder Button (Besides AI Guide button) -->
+        <button class="sg-dock-btn" id="sg-dock-mic" title="Voice Input (Tap to speak)" aria-label="Voice Input">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/>
+            <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+            <line x1="12" y1="19" x2="12" y2="23"/>
+            <line x1="8" y1="23" x2="16" y2="23"/>
+          </svg>
+        </button>
+
+        <!-- Chat Toggle Button (Besides Mic button) -->
+        <button class="sg-dock-btn" id="sg-dock-chat" title="Open Chat" aria-label="Toggle Chat">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+          </svg>
+        </button>
+      </div>
+
+      <!-- Tour Toolbar (visible ONLY during guided tours, floating above dock) -->
+      <div class="sg-tour-bar sg-hidden" id="sg-tour-bar">
+        <span id="sg-tour-info"></span>
+        <div class="sg-tour-controls">
+          <button class="sg-tour-btn" id="sg-tour-prev">Prev</button>
+          <button class="sg-tour-btn" id="sg-tour-next">Next</button>
+          <button class="sg-tour-btn" id="sg-tour-stop">Stop</button>
         </div>
       </div>
 
-      <!-- Independent Chat Panel (Rendered on right, z-index: 999995) -->
-      <div class="sg-chat-panel" id="sg-shell">
+      <!-- Independent Chat Panel (Rendered on right, z-index: 1000000) -->
+      <div class="sg-chat-panel sg-hidden" id="sg-shell">
         
         <!-- Top Row Suggestions -->
         <div class="sg-quick-suggestions">
@@ -99,16 +129,6 @@ export class WidgetView {
           <button class="sg-pill-secondary sg-quick-pill" data-prompt="Walk me through this page">Page Tour</button>
           <button class="sg-pill-secondary" id="sg-btn-not-now">Not now</button>
           <div class="sg-status-indicator" id="sg-status-dot" title="Assistant Status: Ready"></div>
-        </div>
-
-        <!-- Tour Toolbar (visible during guided tours) -->
-        <div class="sg-tour-bar sg-hidden" id="sg-tour-bar">
-          <span id="sg-tour-info">Tour: Step 1</span>
-          <div class="sg-tour-controls">
-            <button class="sg-tour-btn" id="sg-tour-prev">Prev</button>
-            <button class="sg-tour-btn" id="sg-tour-next">Next</button>
-            <button class="sg-tour-btn" id="sg-tour-stop">Stop</button>
-          </div>
         </div>
 
         <!-- Frosted Glass Messages Card -->
@@ -184,7 +204,7 @@ export class WidgetView {
 
     this.shadowRoot.appendChild(root);
 
-    this.launcherBtn = this.shadowRoot.getElementById("sg-launcher")!;
+    this.launcherBtn = this.shadowRoot.getElementById("sg-launcher");
     this.avatarLayer = this.shadowRoot.getElementById("sg-avatar-layer")!;
     this.canvasWrap = this.shadowRoot.getElementById("sg-avatar-wrap")!;
     this.shell = this.shadowRoot.getElementById("sg-shell")!;
@@ -196,9 +216,18 @@ export class WidgetView {
     this.tourBar = this.shadowRoot.getElementById("sg-tour-bar")!;
     this.tourInfo = this.shadowRoot.getElementById("sg-tour-info")!;
     this.toggleAvatarBtn = this.shadowRoot.getElementById("sg-btn-toggle-avatar");
+    this.dockBar = this.shadowRoot.getElementById("sg-dock-bar")!;
+    this.dockGuideBtn = this.shadowRoot.getElementById("sg-dock-guide")!;
+    this.dockMicBtn = this.shadowRoot.getElementById("sg-dock-mic")!;
+    this.dockChatBtn = this.shadowRoot.getElementById("sg-dock-chat")!;
   }
 
   private bindEvents(): void {
+    // Dock Button Events
+    this.dockGuideBtn.addEventListener("click", () => this.toggleAvatar());
+    this.dockMicBtn.addEventListener("click", () => this.toggleVoice());
+    this.dockChatBtn.addEventListener("click", () => this.toggleChat());
+
     // Send message on click
     this.sendBtn.addEventListener("click", () => this.handleSend());
 
@@ -233,17 +262,9 @@ export class WidgetView {
     this.shadowRoot.getElementById("sg-btn-minimize")?.addEventListener("click", () => this.closeChat());
     this.shadowRoot.getElementById("sg-btn-close")?.addEventListener("click", () => this.closeChat());
 
-    // Launcher button reopens chat
-    this.launcherBtn.addEventListener("click", () => {
+    // Launcher button reopens chat (if present)
+    this.launcherBtn?.addEventListener("click", () => {
       this.openChat();
-    });
-
-    // Clicking avatar when chat is closed reopens chat
-    this.avatarLayer.addEventListener("click", (e) => {
-      if (!this.chatOpen) {
-        e.stopPropagation();
-        this.openChat();
-      }
     });
 
     // Tour controls
@@ -251,7 +272,12 @@ export class WidgetView {
     this.shadowRoot.getElementById("sg-tour-prev")?.addEventListener("click", () => tourController.previous());
     this.shadowRoot.getElementById("sg-tour-stop")?.addEventListener("click", () => {
       tourController.stop();
-      this.tourBar.classList.add("sg-hidden");
+      this.hideTourBar();
+      if (this.stage) {
+        this.stage.stopPointing();
+        this.stage.returnToDock();
+        this.stage.setState("idle");
+      }
     });
 
     // Escape key closes the chat panel
@@ -259,14 +285,14 @@ export class WidgetView {
       if (e.key === "Escape") {
         if (tourController.getStatus() === "running") {
           tourController.stop();
-          this.tourBar.classList.add("sg-hidden");
+          this.hideTourBar();
         } else {
           this.closeChat();
         }
       }
     });
 
-    // Mic button
+    // Mic button inside input bar
     this.micBtn.addEventListener("click", () => this.toggleVoice());
   }
 
@@ -312,6 +338,21 @@ export class WidgetView {
     this.applyVisibilityState();
   }
 
+  public setExplainingMode(explaining: boolean): void {
+    if (explaining) {
+      this.shell.classList.add("sg-explaining-mode");
+    } else {
+      this.shell.classList.remove("sg-explaining-mode");
+    }
+  }
+
+  public getChatRect(): DOMRect | null {
+    if (!this.chatOpen || this.shell.classList.contains("sg-hidden")) {
+      return null;
+    }
+    return this.shell.getBoundingClientRect();
+  }
+
   // Backward-compatible API aliases
   public open(): void {
     this.openChat();
@@ -353,17 +394,36 @@ export class WidgetView {
       this.shell.classList.add("sg-hidden");
     }
 
-    // 3. Floating Launcher Button
-    if (!this.chatOpen && !this.avatarVisible) {
-      this.launcherBtn.classList.remove("sg-hidden");
+    // 3. Dock Buttons Visibility:
+    // AI Guide button is always visible.
+    // Mic and Chat buttons are visible ONLY when avatar is visible.
+    if (this.avatarVisible) {
+      this.dockMicBtn.classList.remove("sg-hidden");
+      this.dockChatBtn.classList.remove("sg-hidden");
+      this.dockGuideBtn.classList.remove("inactive");
+      this.dockGuideBtn.title = "Hide 3D Avatar";
     } else {
-      this.launcherBtn.classList.add("sg-hidden");
+      this.dockMicBtn.classList.add("sg-hidden");
+      this.dockChatBtn.classList.add("sg-hidden");
+      this.dockGuideBtn.classList.add("inactive");
+      this.dockGuideBtn.title = "Show 3D Avatar";
     }
 
-    // 4. Update Toggle Avatar Button icon styling
+    // 4. Update Toggle Avatar Button icon styling in chat bar (if present)
     if (this.toggleAvatarBtn) {
       this.toggleAvatarBtn.classList.toggle("active", this.avatarVisible);
       this.toggleAvatarBtn.title = this.avatarVisible ? "Hide 3D Avatar" : "Show 3D Avatar";
+    }
+
+    // 5. Update Dock Chat Button styling
+    if (this.dockChatBtn) {
+      this.dockChatBtn.classList.toggle("active", this.chatOpen);
+      this.dockChatBtn.title = this.chatOpen ? "Close Chat" : "Open Chat";
+    }
+
+    // 6. Floating Launcher Button (deprecated/fallback)
+    if (this.launcherBtn) {
+      this.launcherBtn.classList.add("sg-hidden");
     }
   }
 
@@ -374,36 +434,37 @@ export class WidgetView {
     await this.chatController.sendMessage(text);
   }
 
+  private setRecordingState(recording: boolean): void {
+    this.isRecording = recording;
+    this.micBtn?.classList.toggle("recording", recording);
+    this.dockMicBtn?.classList.toggle("recording", recording);
+  }
+
   private async toggleVoice(): Promise<void> {
     if (this.isRecording) {
-      this.isRecording = false;
-      this.micBtn.classList.remove("recording");
+      this.setRecordingState(false);
       speechRecognizer.stop();
       await microphoneController.stopRecording();
     } else {
-      this.isRecording = true;
-      this.micBtn.classList.add("recording");
+      this.setRecordingState(true);
       this.updateStatus("listening");
 
       if (speechRecognizer.isSupported()) {
         speechRecognizer.start(
           "en-US",
           (transcript) => {
-            this.isRecording = false;
-            this.micBtn.classList.remove("recording");
+            this.setRecordingState(false);
             if (transcript) {
               this.chatController.sendMessage(transcript, "voice_transcript");
             }
           },
           (err) => {
-            this.isRecording = false;
-            this.micBtn.classList.remove("recording");
+            this.setRecordingState(false);
             console.warn("Speech recognition error:", err);
             this.updateStatus("idle");
           },
           () => {
-            this.isRecording = false;
-            this.micBtn.classList.remove("recording");
+            this.setRecordingState(false);
             this.updateStatus("idle");
           }
         );
@@ -411,8 +472,7 @@ export class WidgetView {
         try {
           await microphoneController.startRecording();
         } catch (e: any) {
-          this.isRecording = false;
-          this.micBtn.classList.remove("recording");
+          this.setRecordingState(false);
           alert(e.message || "Microphone access denied.");
         }
       }
@@ -479,12 +539,21 @@ export class WidgetView {
     };
     this.statusIndicator.title = labels[state] || "AI Guide: Ready";
 
-    // Show / hide tour toolbar
+    // Show / hide tour toolbar ONLY when actively running
     if (tourController.getStatus() === "running") {
       this.tourBar.classList.remove("sg-hidden");
       this.tourInfo.textContent = `Tour: Step ${tourController.getCurrentIndex() + 1} of ${tourController.getTotalSteps()}`;
     } else {
+      this.hideTourBar();
+    }
+  }
+
+  public hideTourBar(): void {
+    if (this.tourBar) {
       this.tourBar.classList.add("sg-hidden");
+    }
+    if (this.tourInfo) {
+      this.tourInfo.textContent = "";
     }
   }
 }

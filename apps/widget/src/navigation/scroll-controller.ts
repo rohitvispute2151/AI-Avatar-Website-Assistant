@@ -45,9 +45,33 @@ export class ScrollController {
     return maxHeight;
   }
 
-  public async scrollToElement(element: HTMLElement): Promise<void> {
+  /**
+   * Smoothly scrolls the element into view.
+   * If alignment is "start", positions the target in the upper part of the viewport
+   * below any sticky header to clear ample room below the target for the avatar.
+   */
+  public async scrollToElement(
+    element: HTMLElement,
+    alignment: "start" | "center" = "center"
+  ): Promise<void> {
     const reduced = this.isReducedMotion();
     const behavior: ScrollBehavior = reduced ? "instant" : "smooth";
+
+    if (alignment === "start") {
+      const headerOffset = this.getStickyHeaderHeight();
+      const rect = element.getBoundingClientRect();
+      const desiredTop = headerOffset + 24;
+      const diffY = rect.top - desiredTop;
+
+      if (Math.abs(diffY) > 8) {
+        window.scrollBy({
+          top: diffY,
+          behavior,
+        });
+        await this.waitForScrollSettlement();
+      }
+      return;
+    }
 
     // 1. Initial scroll to center
     element.scrollIntoView({
@@ -68,10 +92,8 @@ export class ScrollController {
     const minPadding = 20;
 
     if (rect.top < headerOffset + minPadding) {
-      // Overlapped by sticky header -> scroll down so target is visible below header
       correctionY = rect.top - (headerOffset + minPadding);
     } else if (rect.bottom > window.innerHeight - footerOffset - minPadding) {
-      // Overlapped by sticky footer -> scroll up
       correctionY = rect.bottom - (window.innerHeight - footerOffset - minPadding);
     }
 
@@ -103,8 +125,6 @@ export class ScrollController {
         }
       };
       requestAnimationFrame(check);
-      // Fallback timeout
-      setTimeout(resolve, 800);
     });
   }
 }

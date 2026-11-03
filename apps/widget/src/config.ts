@@ -73,7 +73,7 @@ export function validateConfig(config: SiteGuideConfig): SiteGuideConfig {
     voiceEnabled: true,
     textEnabled: true,
     avatarVisible: config.avatarVisible !== undefined ? config.avatarVisible : true,
-    chatOpen: config.chatOpen !== undefined ? config.chatOpen : true,
+    chatOpen: config.chatOpen !== undefined ? config.chatOpen : false,
     quality: "auto",
     cameraFraming: "bust",
     theme: "dark",
