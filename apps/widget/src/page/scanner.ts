@@ -53,10 +53,14 @@ function computeAccessibleName(el: Element): string {
     return alt.trim();
   }
 
-  // 7. title or placeholder as fallback
+  // 7. title, data-guide, or placeholder as fallback
   const title = el.getAttribute("title");
   if (title && title.trim()) {
     return title.trim();
+  }
+  const guide = el.getAttribute("data-guide");
+  if (guide && guide.trim()) {
+    return guide.trim();
   }
   const placeholder = el.getAttribute("placeholder");
   if (placeholder && placeholder.trim()) {
@@ -91,7 +95,7 @@ function isElementVisible(el: Element): boolean {
 // LLD §4.7: scan open shadow roots recursively with a depth cap
 function collectCandidateElements(root: Element | Document | ShadowRoot, maxDepth = 3, currentDepth = 0): Element[] {
   const selector =
-    "main, section, article, header, footer, nav, h1, h2, h3, h4, h5, h6, p, a, button, form, input, select, textarea, [role='button'], [role='region']";
+    "[data-guide], main, section, article, header, footer, nav, h1, h2, h3, h4, h5, h6, p, a, button, form, input, select, textarea, [role='button'], [role='region']";
   
   const elements = Array.from(root.querySelectorAll(selector));
 

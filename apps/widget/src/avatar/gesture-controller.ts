@@ -1,6 +1,14 @@
 import { Gesture } from "../page/manifest";
 
-export type ExtendedGesture = Gesture | "thinking" | "wave" | "hands_on_hips" | "listening";
+export type ExtendedGesture =
+  | Gesture
+  | "thinking"
+  | "wave"
+  | "hands_on_hips"
+  | "listening"
+  | "celebrating"
+  | "greeting"
+  | "goodbye";
 
 export interface GesturePose {
   leftArm: { x: number; y: number; z: number };

@@ -1,16 +1,26 @@
 import { GestureController, GesturePose, ExtendedGesture } from "./gesture-controller";
 import { Gesture } from "../page/manifest";
 
-export type LocomotionState = "idle" | "walk";
+export type LocomotionState = "idle" | "walk" | "run" | "turn";
 export type AvatarHighLevelState =
   | "idle"
   | "walk"
+  | "walking"
+  | "running"
+  | "turning"
   | "thinking"
   | "listening"
   | "speaking"
+  | "talking"
+  | "pointing"
   | "point_left"
   | "point_right"
-  | "explain";
+  | "waving"
+  | "greeting"
+  | "explain"
+  | "explaining"
+  | "celebrating"
+  | "goodbye";
 
 export interface BlendedAvatarPose {
   rootY: number;
@@ -59,8 +69,9 @@ export class AnimationController {
   }
 
   public setState(state: AvatarHighLevelState): void {
-    if (state === "walk") {
-      this.setLocomotion("walk");
+    if (state === "walk" || state === "walking" || state === "running" || state === "turning") {
+      this.setLocomotion(state === "running" ? "run" : state === "turning" ? "turn" : "walk");
+      this.setGesture("none");
     } else {
       this.setLocomotion("idle");
       if (
@@ -68,10 +79,17 @@ export class AnimationController {
         state === "point_right" ||
         state === "explain" ||
         state === "thinking" ||
-        state === "listening"
+        state === "listening" ||
+        state === "celebrating" ||
+        state === "greeting" ||
+        state === "goodbye"
       ) {
         this.setGesture(state);
-      } else if (state === "speaking") {
+      } else if (state === "pointing") {
+        this.setGesture("point_right");
+      } else if (state === "waving") {
+        this.setGesture("wave");
+      } else if (state === "speaking" || state === "talking" || state === "explaining") {
         this.setGesture("explain");
       } else if (state === "idle") {
         this.setGesture("none");

@@ -1,36 +1,59 @@
 import * as THREE from "three";
 
+export type PointingStyle = "point" | "present";
+
 export interface GestureArmPose {
+  shoulderQuat: THREE.Quaternion;
   armQuat: THREE.Quaternion;
   foreArmQuat: THREE.Quaternion;
   handQuat: THREE.Quaternion;
+  fingers: Record<string, THREE.Quaternion>;
 }
 
 export interface DualArmGestureState {
   weight: number; // 0.0 (idle rest) to 1.0 (fully gesturing/pointing)
   isPointing: boolean;
   pointingSide: "left" | "right" | "none";
+  style: PointingStyle;
   left: GestureArmPose;
   right: GestureArmPose;
   lookAtScreen: { x: number; y: number };
 }
 
+export interface PointingTargetBones {
+  leftArm?: THREE.Bone | null;
+  rightArm?: THREE.Bone | null;
+  leftShoulder?: THREE.Bone | null;
+  rightShoulder?: THREE.Bone | null;
+}
+
+const FINGER_NAMES = ["Index", "Middle", "Ring", "Pinky"];
+
 /**
- * Procedural Two-Handed Presenting & Target Aiming Controller.
+ * Procedural Target-Aware Pointing & Two-Handed Presenting Controller.
  *
- * Enforces:
- * 1. Two-Handed presenting gestures when speaking or explaining with:
- *    - Resting state: upper arms close to torso, elbows bent at 70-100 deg,
- *      forearms raised forward at waist/chest height, hands open with palms facing viewer/up.
- *    - Cycle variety across 4 distinct gestures (open welcoming spread, speech emphasis beats,
- *      centered describing, and asymmetric cadence with one leading hand).
- *    - Speech energy coupling from real-time lip-sync/visemes.
- *    - Asymmetric timing (120-150ms delay between arms) and amplitude offsets.
- * 2. Pointing at page elements with:
- *    - Bent-elbow reach with nearest arm (never fully extended sideways).
- *    - Opposite arm performing a natural supporting waist/chest gesture (never stiff/frozen).
- *    - Fallback to two-handed presenting if target is off-screen, behind chat, or out of reach.
- *    - Strict joint limits so no limb ever hyperextends or droops.
+ * Implements:
+ * 1. Target-relative nearest hand selection:
+ *    - Uses live 3D unprojection or projected shoulder distance to determine which arm
+ *      provides the most natural reach toward the target element without crossing the torso.
+ *    - In standard presentation facing the viewer:
+ *      Target to screen-right (e.g. form fields) -> LeftArm (on screen-right) points directly outward.
+ *      Target to screen-left -> RightArm (on screen-left) points directly outward.
+ * 2. Full anatomical arm articulation:
+ *    - Clavicle / Shoulder: elevation and extension toward target direction.
+ *    - Upper Arm: raised and aimed along the 3D ray directly toward the target.
+ *    - Forearm: natural elbow flexion (never locked or hyperextended, never drooping near waist).
+ *    - Wrist / Hand: aligned with the pointing ray toward the target.
+ *    - Finger articulation:
+ *      - Point style (form fields, buttons, links, controls): Index finger fully extended straight,
+ *        middle/ring/pinky curled into palm, thumb resting comfortably against the side.
+ *      - Present style (sections, cards, broad areas): Softly opened welcoming palm.
+ * 3. Supporting opposite arm:
+ *    - Opposite arm rests naturally near waist/hip with subtle breathing micro-motion (never stiff).
+ * 4. Two-Handed presenting gestures when speaking without target:
+ *    - Both arms active with cycle variety (spread, emphasis beats, center, alternating).
+ * 5. Smooth slerping and live tracking on scroll/resize:
+ *    - Automatically aims at updated coordinates without resetting or snapping.
  */
 export class PointingController {
   // Target pointing state
@@ -38,35 +61,65 @@ export class PointingController {
   private currentWeight = 0;
   private targetWeight = 0;
   private pointingSide: "left" | "right" | "none" = "none";
+  private style: PointingStyle = "point";
 
   // Speaking / Explaining state
   private isSpeaking = false;
   private isExplaining = false;
   private speechEnergy = 0;
-  private pointingDuration = 0;
 
-  // Smoothed screen aim coords for direct inter-target blending
+  // Screen aim coords for direct inter-target blending
   private currentAimX = 0;
   private currentAimY = 0;
   private targetAimX = 0;
   private targetAimY = 0;
 
-  // Gesture variety state machine
+  // 3D aim target quaternion smoothing
+  private currentAimQuat = new THREE.Quaternion();
+  private targetAimQuat = new THREE.Quaternion();
+
+  // Gesture variety state machine for general speech
   private gestureTimer = 0;
-  private currentGestureType = 0; // 0: spread, 1: emphasis, 2: center, 3: alternating
+  private currentGestureType = 0;
   private leadArm: "left" | "right" = "left";
 
   // Quaternions for Left Arm chain
+  private leftShoulderQuat = new THREE.Quaternion();
   private leftArmQuat = new THREE.Quaternion();
   private leftForeArmQuat = new THREE.Quaternion();
   private leftHandQuat = new THREE.Quaternion();
+  private leftFingerQuats: Record<string, THREE.Quaternion> = {};
 
   // Quaternions for Right Arm chain
+  private rightShoulderQuat = new THREE.Quaternion();
   private rightArmQuat = new THREE.Quaternion();
   private rightForeArmQuat = new THREE.Quaternion();
   private rightHandQuat = new THREE.Quaternion();
+  private rightFingerQuats: Record<string, THREE.Quaternion> = {};
+
+  // Base bind quaternions for RPM armature shoulders
+  private baseLeftShoulderQuat = new THREE.Quaternion(0.481688, 0.492769, -0.588907, 0.422308);
+  private baseRightShoulderQuat = new THREE.Quaternion(0.481688, -0.49277, 0.588906, 0.422308);
 
   private lookAtScreen = { x: 0, y: 0 };
+
+  constructor() {
+    this.initFingerQuats();
+  }
+
+  private initFingerQuats(): void {
+    ["Left", "Right"].forEach((side) => {
+      const quats = side === "Left" ? this.leftFingerQuats : this.rightFingerQuats;
+      FINGER_NAMES.forEach((f) => {
+        [1, 2, 3].forEach((joint) => {
+          quats[`${side}Hand${f}${joint}`] = new THREE.Quaternion();
+        });
+      });
+      [1, 2].forEach((joint) => {
+        quats[`${side}HandThumb${joint}`] = new THREE.Quaternion();
+      });
+    });
+  }
 
   /**
    * Sets target element bounding rect for pointing.
@@ -74,7 +127,10 @@ export class PointingController {
   public setTarget(
     targetRect: DOMRect | null,
     avatarLayerEl?: HTMLElement | null,
-    chatShellEl?: HTMLElement | null
+    canvasEl?: HTMLElement | null,
+    camera?: THREE.PerspectiveCamera | null,
+    style: PointingStyle = "point",
+    bones?: PointingTargetBones
   ): { isEdgeCase: boolean; fallbackGesture?: "explain" } {
     if (!targetRect) {
       this.clearTarget();
@@ -82,13 +138,16 @@ export class PointingController {
     }
 
     this.targetRect = targetRect;
+    this.style = style;
 
     // 1. Edge Case: Off-screen
+    const vpW = typeof window !== "undefined" ? window.innerWidth : 1366;
+    const vpH = typeof window !== "undefined" ? window.innerHeight : 768;
     const isOffscreen =
       targetRect.right < 0 ||
-      targetRect.left > window.innerWidth ||
+      targetRect.left > vpW ||
       targetRect.bottom < 0 ||
-      targetRect.top > window.innerHeight;
+      targetRect.top > vpH;
 
     if (isOffscreen) {
       this.pointingSide = "none";
@@ -96,42 +155,89 @@ export class PointingController {
       return { isEdgeCase: true, fallbackGesture: "explain" };
     }
 
-    // 2. Compute relative vector from avatar chest/shoulder center
-    const avatarRect = avatarLayerEl
+    // Target center in viewport screen pixels
+    const targetCenterX = targetRect.left + targetRect.width * 0.5;
+    const targetCenterY = targetRect.top + targetRect.height * 0.5;
+
+    // Avatar container rect in viewport screen pixels
+    const aRect = avatarLayerEl
       ? avatarLayerEl.getBoundingClientRect()
       : {
-          left: window.innerWidth - 320,
-          top: window.innerHeight - 560,
+          left: vpW - 320,
+          top: vpH - 560,
           width: 290,
           height: 550,
         };
 
-    const avatarCenterX = avatarRect.left + avatarRect.width * 0.5;
-    const avatarShoulderY = avatarRect.top + avatarRect.height * 0.28;
-
-    const targetCenterX = targetRect.left + targetRect.width * 0.5;
-    const targetCenterY = targetRect.top + targetRect.height * 0.5;
+    const avatarCenterX = aRect.left + aRect.width * 0.5;
+    const avatarShoulderY = aRect.top + aRect.height * 0.28;
 
     const dx = targetCenterX - avatarCenterX;
     const dy = targetCenterY - avatarShoulderY;
     const dist = Math.hypot(dx, dy);
 
-    // Edge Case: target center is too close to avatar chest/shoulder (< 60px)
-    if (dist < 60) {
+    // Edge Case: target center is too close to avatar chest/shoulder (< 50px)
+    if (dist < 50) {
       this.pointingSide = "none";
       this.targetWeight = this.isSpeaking || this.isExplaining ? 1.0 : 0.0;
       return { isEdgeCase: true, fallbackGesture: "explain" };
     }
 
-    // Nearest arm aims toward target center
+    // 2. Select Nearest Arm:
+    // In screen coordinates:
+    // When the avatar faces the camera, LeftArm is on screen-right (+X), RightArm is on screen-left (-X).
+    // If target is to the right of the avatar on screen (dx >= 0), LeftArm provides the direct,
+    // unobstructed reach toward the element (e.g. contact form).
+    // If target is to the left of the avatar on screen (dx < 0), RightArm provides the direct reach.
+    // For backwards compatibility and high-level tests:
+    // getActiveSide() returns "left" if target is on screen-left (dx < 0), "right" if on screen-right (dx >= 0).
+    this.pointingSide = dx < 0 ? "left" : "right";
     this.targetAimX = dx;
     this.targetAimY = dy;
-    this.pointingSide = dx < 0 ? "left" : "right";
     this.targetWeight = 1.0;
 
+    // 3. 3D Aim Ray calculation when Camera and Canvas are available
+    if (camera && canvasEl) {
+      const cRect = canvasEl.getBoundingClientRect();
+      const ndcX = ((targetCenterX - cRect.left) / Math.max(1, cRect.width)) * 2 - 1;
+      const ndcY = -(((targetCenterY - cRect.top) / Math.max(1, cRect.height)) * 2 - 1);
+
+      // Unproject camera ray
+      const nearPoint = new THREE.Vector3(ndcX, ndcY, -1).unproject(camera);
+      const farPoint = new THREE.Vector3(ndcX, ndcY, 1).unproject(camera);
+      const rayDir = farPoint.sub(nearPoint).normalize();
+
+      // Intersect with presentation depth plane Z = 0.15 in front of the character
+      const t = (0.15 - camera.position.z) / (rayDir.z !== 0 ? rayDir.z : -1e-6);
+      const targetWorldPos = camera.position.clone().add(rayDir.multiplyScalar(t));
+
+      // Chosen arm bone (LeftArm if dx >= 0, RightArm if dx < 0)
+      const isScreenRight = dx >= 0;
+      const activeShoulder = isScreenRight ? bones?.leftShoulder : bones?.rightShoulder;
+      const shoulderWorldPos = activeShoulder
+        ? activeShoulder.getWorldPosition(new THREE.Vector3())
+        : (isScreenRight ? new THREE.Vector3(0.062, 1.35, 0) : new THREE.Vector3(-0.062, 1.35, 0));
+
+      const shoulderWorldQuat = activeShoulder
+        ? activeShoulder.getWorldQuaternion(new THREE.Quaternion())
+        : (isScreenRight ? this.baseLeftShoulderQuat : this.baseRightShoulderQuat);
+
+      // Target direction from shoulder to 3D point
+      const targetDirWorld = targetWorldPos.clone().sub(shoulderWorldPos).normalize();
+
+      // Transform target direction into shoulder's local coordinate system
+      const localTargetDir = targetDirWorld.clone().applyQuaternion(shoulderWorldQuat.clone().invert()).normalize();
+
+      // In Ready Player Me rig, bone primary axis is local (0, 1, 0)
+      this.targetAimQuat.setFromUnitVectors(new THREE.Vector3(0, 1, 0), localTargetDir);
+    } else {
+      // Fallback screen-space Euler calculation
+      this.computeFallbackAimQuat(dx, dy);
+    }
+
     // Head gaze tracking towards target
-    const normX = (targetCenterX - window.innerWidth * 0.5) / (window.innerWidth * 0.5);
-    const normY = (targetCenterY - window.innerHeight * 0.5) / (window.innerHeight * 0.5);
+    const normX = (targetCenterX - vpW * 0.5) / (vpW * 0.5);
+    const normY = (targetCenterY - vpH * 0.5) / (vpH * 0.5);
     this.lookAtScreen = {
       x: Math.max(-1, Math.min(1, normX)),
       y: Math.max(-1, Math.min(1, normY)),
@@ -140,37 +246,35 @@ export class PointingController {
     return { isEdgeCase: false };
   }
 
+  private computeFallbackAimQuat(dx: number, dy: number): void {
+    const isScreenRight = dx >= 0;
+    const sign = isScreenRight ? 1 : -1;
+    const dist = Math.max(1, Math.hypot(dx, dy));
+    const nx = dx / dist;
+    const ny = dy / dist;
+
+    // Pitch: positive raises arm from downward hang to horizontal forward reach
+    // Level is ~0.35 rad, higher targets reach up (~0.1), lower reach down (~0.55)
+    const pitch = THREE.MathUtils.clamp(-ny * 0.55 + 0.35, -0.15, 0.65);
+    const yaw = sign * (0.35 + Math.abs(nx) * 0.35);
+    const roll = -sign * 0.18;
+
+    this.targetAimQuat.setFromEuler(new THREE.Euler(pitch, yaw, roll, "XYZ"));
+  }
+
   /**
    * Continuously updates pointing aim during scrolling, resizing, or avatar translation.
    */
-  public updateAim(targetRect: DOMRect, avatarLayerEl?: HTMLElement | null): void {
+  public updateAim(
+    targetRect: DOMRect,
+    avatarLayerEl?: HTMLElement | null,
+    canvasEl?: HTMLElement | null,
+    camera?: THREE.PerspectiveCamera | null,
+    style: PointingStyle = this.style,
+    bones?: PointingTargetBones
+  ): void {
     if (!targetRect) return;
-    this.targetRect = targetRect;
-    const avatarRect = avatarLayerEl
-      ? avatarLayerEl.getBoundingClientRect()
-      : {
-          left: window.innerWidth - 320,
-          top: window.innerHeight - 560,
-          width: 290,
-          height: 550,
-        };
-
-    const avatarCenterX = avatarRect.left + avatarRect.width * 0.5;
-    const avatarShoulderY = avatarRect.top + avatarRect.height * 0.28;
-
-    const targetCenterX = targetRect.left + targetRect.width * 0.5;
-    const targetCenterY = targetRect.top + targetRect.height * 0.5;
-
-    this.targetAimX = targetCenterX - avatarCenterX;
-    this.targetAimY = targetCenterY - avatarShoulderY;
-    this.pointingSide = this.targetAimX < 0 ? "left" : "right";
-
-    const normX = (targetCenterX - window.innerWidth * 0.5) / (window.innerWidth * 0.5);
-    const normY = (targetCenterY - window.innerHeight * 0.5) / (window.innerHeight * 0.5);
-    this.lookAtScreen = {
-      x: Math.max(-1, Math.min(1, normX)),
-      y: Math.max(-1, Math.min(1, normY)),
-    };
+    this.setTarget(targetRect, avatarLayerEl, canvasEl, camera, style, bones);
   }
 
   public clearTarget(): void {
@@ -215,6 +319,15 @@ export class PointingController {
     return this.pointingSide;
   }
 
+  public getActiveArm(): "LeftArm" | "RightArm" | "none" {
+    if (this.pointingSide === "none") return "none";
+    return this.targetAimX >= 0 ? "LeftArm" : "RightArm";
+  }
+
+  public getStyle(): PointingStyle {
+    return this.style;
+  }
+
   /**
    * Main procedural evaluation loop called per frame.
    */
@@ -227,8 +340,8 @@ export class PointingController {
     const shouldBeActive = this.targetRect !== null || this.isSpeaking || this.isExplaining;
     this.targetWeight = shouldBeActive ? 1.0 : 0.0;
 
-    // 1. Smooth blend in and out (ease speed ~3.5/s -> ~280ms transition)
-    const blendSpeed = this.targetWeight > this.currentWeight ? 3.5 : 2.8;
+    // 1. Smooth blend in and out (ease speed ~3.6/s -> ~270ms transition)
+    const blendSpeed = this.targetWeight > this.currentWeight ? 3.6 : 2.8;
     if (this.currentWeight < this.targetWeight) {
       this.currentWeight = Math.min(this.targetWeight, this.currentWeight + delta * blendSpeed);
     } else if (this.currentWeight > this.targetWeight) {
@@ -236,11 +349,12 @@ export class PointingController {
     }
 
     // 2. Smooth aim interpolation for target pointing
-    const aimBlendSpeed = 7.0;
+    const aimBlendSpeed = 8.0;
     this.currentAimX += (this.targetAimX - this.currentAimX) * Math.min(1.0, delta * aimBlendSpeed);
     this.currentAimY += (this.targetAimY - this.currentAimY) * Math.min(1.0, delta * aimBlendSpeed);
+    this.currentAimQuat.slerp(this.targetAimQuat, Math.min(1.0, delta * aimBlendSpeed));
 
-    // 3. Gesture variety timer for two-handed presenting (switches gesture every ~3.5s)
+    // 3. Gesture variety timer for two-handed presenting when speaking without a target
     this.gestureTimer += delta;
     if (this.gestureTimer > 3.6) {
       this.gestureTimer = 0;
@@ -254,15 +368,20 @@ export class PointingController {
         weight: 0,
         isPointing: false,
         pointingSide: "none",
+        style: this.style,
         left: {
+          shoulderQuat: this.baseLeftShoulderQuat,
           armQuat: this.leftArmQuat,
           foreArmQuat: this.leftForeArmQuat,
           handQuat: this.leftHandQuat,
+          fingers: this.leftFingerQuats,
         },
         right: {
+          shoulderQuat: this.baseRightShoulderQuat,
           armQuat: this.rightArmQuat,
           foreArmQuat: this.rightForeArmQuat,
-          handQuat: this.rightHandHandQuatSafe(),
+          handQuat: this.rightHandQuat,
+          fingers: this.rightFingerQuats,
         },
         lookAtScreen: this.lookAtScreen,
       };
@@ -270,24 +389,8 @@ export class PointingController {
 
     // 4. Compute Poses for BOTH Arms
     if (this.pointingSide !== "none" && this.targetRect) {
-      // -------------------------------------------------------------
-      // POINTING MODE: Nearest arm points, other arm supports at waist
-      // Broad Section Sweeping: If section is wide (>300px), transition
-      // from direct point to gentle open-palm sweep across section width
-      // -------------------------------------------------------------
-      this.pointingDuration += delta;
-      if (this.targetRect.width > 300 && this.pointingDuration > 1.4) {
-        const sweepPhase = (this.pointingDuration - 1.4) * 1.6;
-        const sweepSpan = Math.min(140, this.targetRect.width * 0.20);
-        const sweepX = Math.sin(sweepPhase) * sweepSpan;
-        this.currentAimX += sweepX * delta * 2.5;
-      }
       this.computePointingPose(time);
     } else {
-      // -------------------------------------------------------------
-      // TWO-HANDED PRESENTING MODE: Explaining / Speaking without target
-      // -------------------------------------------------------------
-      this.pointingDuration = 0;
       this.computePresentingPose(time);
     }
 
@@ -295,39 +398,182 @@ export class PointingController {
       weight: this.currentWeight,
       isPointing: this.pointingSide !== "none",
       pointingSide: this.pointingSide,
+      style: this.style,
       left: {
+        shoulderQuat: this.leftShoulderQuat,
         armQuat: this.leftArmQuat,
         foreArmQuat: this.leftForeArmQuat,
         handQuat: this.leftHandQuat,
+        fingers: this.leftFingerQuats,
       },
       right: {
+        shoulderQuat: this.rightShoulderQuat,
         armQuat: this.rightArmQuat,
         foreArmQuat: this.rightForeArmQuat,
         handQuat: this.rightHandQuat,
+        fingers: this.rightFingerQuats,
       },
       lookAtScreen: this.lookAtScreen,
     };
   }
 
-  private rightHandHandQuatSafe(): THREE.Quaternion {
-    return this.rightHandQuat;
+  /**
+   * Computes Target-Aware Pointing Pose:
+   * - Active arm is selected based on target direction (nearest to target without crossing torso).
+   * - Active arm raises, extends, and aims toward the target element with proper shoulder,
+   *   elbow, wrist, and finger articulation.
+   * - Supporting opposite arm rests comfortably at the waist/hip with natural breathing drift.
+   */
+  private computePointingPose(time: number): void {
+    // When target is to the right on screen (dx >= 0), LeftArm is on screen-right facing target.
+    // When target is to the left on screen (dx < 0), RightArm is on screen-left facing target.
+    const isScreenRight = this.targetAimX >= 0;
+    const sign = isScreenRight ? 1 : -1;
+    const microSway = Math.sin(time * 2.0) * 0.01;
+
+    // --- 1. ACTIVE POINTING ARM ---
+    // Clavicle elevation: subtle reach lift (5-8 degrees)
+    const activeShoulderQuat = (isScreenRight ? this.baseLeftShoulderQuat : this.baseRightShoulderQuat)
+      .clone()
+      .multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(0, 0, sign * 0.08)));
+
+    // Upper Arm: Aim along target direction (from 3D unprojection or fallback)
+    let activeArmQuat: THREE.Quaternion;
+    if (this.currentAimQuat.lengthSq() > 0.1) {
+      activeArmQuat = this.currentAimQuat.clone();
+      // Add subtle microSway
+      activeArmQuat.multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(microSway, 0, 0)));
+    } else {
+      const pitch = THREE.MathUtils.clamp(-this.targetAimY * 0.001 + 0.35, -0.15, 0.65);
+      const yaw = sign * 0.55;
+      const roll = -sign * 0.18;
+      activeArmQuat = new THREE.Quaternion().setFromEuler(new THREE.Euler(pitch, yaw, roll, "XYZ"));
+    }
+
+    // Forearm: Bent elbow with comfortable extension (15° - 25° bend, flex 0.28..0.42 rad)
+    const isPoint = this.style === "point";
+    const flexAngle = isPoint ? 0.30 : 0.42;
+    const activeForeArmQuat = new THREE.Quaternion().setFromAxisAngle(
+      new THREE.Vector3(0, 0, sign),
+      flexAngle + microSway * 0.5
+    );
+
+    // Hand / Wrist: Aligned with forearm pointing toward target
+    const handPitch = isPoint ? -0.05 : -0.15;
+    const handYaw = sign * 0.12;
+    const handRoll = sign * 0.08;
+    const activeHandQuat = new THREE.Quaternion().setFromEuler(new THREE.Euler(handPitch, handYaw, handRoll, "XYZ"));
+
+    // --- 2. SUPPORTING OPPOSITE ARM (rests comfortably at waist/hip) ---
+    const supShoulderQuat = isScreenRight ? this.baseRightShoulderQuat : this.baseLeftShoulderQuat;
+    const supArmEuler = new THREE.Euler(
+      1.06 + Math.sin(time * 1.8) * 0.015,
+      -sign * 0.12,
+      sign * 0.22,
+      "XYZ"
+    );
+    const supForeEuler = new THREE.Euler(
+      0.34,
+      -sign * 0.08,
+      -sign * (1.36 + Math.sin(time * 1.8 + 0.5) * 0.02),
+      "XYZ"
+    );
+    const supHandEuler = new THREE.Euler(0.02, -sign * 0.14, sign * 0.08, "XYZ");
+
+    const supArmQuat = new THREE.Quaternion().setFromEuler(supArmEuler);
+    const supForeArmQuat = new THREE.Quaternion().setFromEuler(supForeEuler);
+    const supHandQuat = new THREE.Quaternion().setFromEuler(supHandEuler);
+
+    // Assign to Left / Right chains
+    if (isScreenRight) {
+      // LeftArm is ACTIVE pointing arm, RightArm is SUPPORTING arm
+      this.leftShoulderQuat.copy(activeShoulderQuat);
+      this.leftArmQuat.copy(activeArmQuat);
+      this.leftForeArmQuat.copy(activeForeArmQuat);
+      this.leftHandQuat.copy(activeHandQuat);
+
+      this.rightShoulderQuat.copy(supShoulderQuat);
+      this.rightArmQuat.copy(supArmQuat);
+      this.rightForeArmQuat.copy(supForeArmQuat);
+      this.rightHandQuat.copy(supHandQuat);
+
+      this.applyFingerPoses("Left", isPoint ? "point" : "present");
+      this.applyFingerPoses("Right", "relaxed");
+    } else {
+      // RightArm is ACTIVE pointing arm, LeftArm is SUPPORTING arm
+      this.rightShoulderQuat.copy(activeShoulderQuat);
+      this.rightArmQuat.copy(activeArmQuat);
+      this.rightForeArmQuat.copy(activeForeArmQuat);
+      this.rightHandQuat.copy(activeHandQuat);
+
+      this.leftShoulderQuat.copy(supShoulderQuat);
+      this.leftArmQuat.copy(supArmQuat);
+      this.leftForeArmQuat.copy(supForeArmQuat);
+      this.leftHandQuat.copy(supHandQuat);
+
+      this.applyFingerPoses("Right", isPoint ? "point" : "present");
+      this.applyFingerPoses("Left", "relaxed");
+    }
   }
 
   /**
-   * Computes Two-Handed Explaining / Presenting Poses.
-   * Both arms are bent at 70-100 deg at the elbows, forearms raised forward
-   * at waist/chest height, hands open with palms facing viewer/up.
+   * Applies anatomically correct finger poses to a specific hand.
+   */
+  private applyFingerPoses(side: "Left" | "Right", pose: "point" | "present" | "relaxed"): void {
+    const quats = side === "Left" ? this.leftFingerQuats : this.rightFingerQuats;
+    const isLeft = side === "Left";
+    const sign = isLeft ? 1 : -1;
+
+    if (pose === "point") {
+      // Index finger extended straight toward target
+      [1, 2, 3].forEach((joint) => {
+        quats[`${side}HandIndex${joint}`].setFromEuler(new THREE.Euler(0.02, 0, 0, "XYZ"));
+      });
+
+      // Middle, Ring, Pinky curled tightly into palm
+      [1, 2, 3].forEach((joint) => {
+        quats[`${side}HandMiddle${joint}`].setFromEuler(new THREE.Euler(joint === 1 ? 0.95 : 1.05, 0, 0, "XYZ"));
+        quats[`${side}HandRing${joint}`].setFromEuler(new THREE.Euler(joint === 1 ? 1.0 : 1.10, 0, 0, "XYZ"));
+        quats[`${side}HandPinky${joint}`].setFromEuler(new THREE.Euler(joint === 1 ? 1.1 : 1.15, 0, 0, "XYZ"));
+      });
+
+      // Thumb tucked comfortably against side of curled fingers
+      quats[`${side}HandThumb1`].setFromEuler(new THREE.Euler(0.35, 0, sign * 0.40, "XYZ"));
+      quats[`${side}HandThumb2`].setFromEuler(new THREE.Euler(0.28, 0, sign * 0.25, "XYZ"));
+    } else if (pose === "present") {
+      // Open welcoming palm: All fingers softly open, palm facing target/viewer
+      FINGER_NAMES.forEach((f) => {
+        [1, 2, 3].forEach((joint) => {
+          const curlX = 0.16 + joint * 0.03;
+          quats[`${side}Hand${f}${joint}`].setFromEuler(new THREE.Euler(curlX, 0, 0, "XYZ"));
+        });
+      });
+      quats[`${side}HandThumb1`].setFromEuler(new THREE.Euler(0.22, 0, sign * 0.28, "XYZ"));
+      quats[`${side}HandThumb2`].setFromEuler(new THREE.Euler(0.18, 0, sign * 0.15, "XYZ"));
+    } else {
+      // Relaxed resting curl
+      FINGER_NAMES.forEach((f) => {
+        [1, 2, 3].forEach((joint) => {
+          const curlX = 0.36 + joint * 0.07;
+          quats[`${side}Hand${f}${joint}`].setFromEuler(new THREE.Euler(curlX, 0, 0, "XYZ"));
+        });
+      });
+      quats[`${side}HandThumb1`].setFromEuler(new THREE.Euler(0.22, 0, sign * 0.24, "XYZ"));
+      quats[`${side}HandThumb2`].setFromEuler(new THREE.Euler(0.20, 0, sign * 0.18, "XYZ"));
+    }
+  }
+
+  /**
+   * Computes Two-Handed Explaining / Presenting Poses when speaking without target.
    */
   private computePresentingPose(time: number): void {
-    const energy = Math.min(1.0, this.speechEnergy * 2.5); // Normalized 0..1
+    const energy = Math.min(1.0, this.speechEnergy * 2.5);
     const breathingDrift = Math.sin(time * 1.6) * 0.012;
 
-    // Asymmetric timing: Left leads by ~130ms or Right leads depending on cycle
     const leadOffset = this.leadArm === "left" ? 0.28 : -0.28;
     const phaseL = time * 2.2 + leadOffset * 0.5;
     const phaseR = time * 2.2 - leadOffset * 0.5;
 
-    // Base resting presenting pose (upper arms close to sides, elbows bent 75-90 deg)
     let lPitch = 1.02 + breathingDrift;
     let rPitch = 1.02 + breathingDrift;
 
@@ -337,8 +583,6 @@ export class PointingController {
     let lRoll = -0.22;
     let rRoll = 0.22;
 
-    // Elbow flexion (Left: +Z, Right: -Z for Mixamo/Wolf3D armature)
-    // 1.45 rad ~= 83 degrees bend forward and up
     let lFlex = 1.45;
     let rFlex = -1.45;
 
@@ -347,10 +591,9 @@ export class PointingController {
     let lHandYaw = -0.18;
     let rHandYaw = 0.18;
 
-    // Apply gesture variety pattern
     switch (this.currentGestureType) {
       case 0: {
-        // Welcoming / Explaining open palms spreading slightly outward
+        // Welcoming spread
         const spreadL = (Math.sin(phaseL) * 0.5 + 0.5) * 0.10 * (1.0 + energy * 0.5);
         const spreadR = (Math.sin(phaseR) * 0.5 + 0.5) * 0.09 * (1.0 + energy * 0.5);
         lYaw += spreadL;
@@ -362,7 +605,7 @@ export class PointingController {
         break;
       }
       case 1: {
-        // Speech rhythm emphasis beats (both hands moving up and down in speech cadence)
+        // Speech rhythm emphasis beats
         const beatL = Math.sin(phaseL * 1.8) * (0.05 + energy * 0.12);
         const beatR = Math.sin(phaseR * 1.8) * (0.045 + energy * 0.11);
         lPitch -= beatL * 0.6;
@@ -374,7 +617,7 @@ export class PointingController {
         break;
       }
       case 2: {
-        // Describing / comparing: Hands drawing slightly toward center, then outward
+        // Center describing
         const centerL = Math.cos(phaseL * 1.2) * 0.07;
         const centerR = Math.cos(phaseR * 1.2) * 0.065;
         lYaw -= centerL;
@@ -385,7 +628,7 @@ export class PointingController {
       }
       case 3:
       default: {
-        // Alternating cadence: One hand leads slightly higher while other holds support
+        // Alternating cadence
         const altL = Math.sin(phaseL * 1.5) * (0.06 + energy * 0.08);
         const altR = Math.sin(phaseR * 1.5 + 1.2) * (0.04 + energy * 0.06);
         lPitch -= altL * 0.5;
@@ -396,7 +639,6 @@ export class PointingController {
       }
     }
 
-    // Enforce strict anatomical joint limits
     lPitch = THREE.MathUtils.clamp(lPitch, 0.85, 1.15);
     rPitch = THREE.MathUtils.clamp(rPitch, 0.85, 1.15);
 
@@ -406,113 +648,21 @@ export class PointingController {
     lRoll = THREE.MathUtils.clamp(lRoll, -0.32, -0.12);
     rRoll = THREE.MathUtils.clamp(rRoll, 0.12, 0.32);
 
-    // Elbow flexion: ALWAYS bent at 70-100 deg (1.20 - 1.75 rad)
     lFlex = THREE.MathUtils.clamp(lFlex, 1.22, 1.70);
     rFlex = THREE.MathUtils.clamp(rFlex, -1.70, -1.22);
 
-    // Build quaternions
-    const lArmEuler = new THREE.Euler(lPitch, lYaw, lRoll, "XYZ");
-    const lForeEuler = new THREE.Euler(0.32, 0.10, lFlex, "XYZ");
-    const lHandEuler = new THREE.Euler(lHandPitch, lHandYaw, 0.12, "XYZ");
+    this.leftShoulderQuat.copy(this.baseLeftShoulderQuat);
+    this.rightShoulderQuat.copy(this.baseRightShoulderQuat);
 
-    const rArmEuler = new THREE.Euler(rPitch, rYaw, rRoll, "XYZ");
-    const rForeEuler = new THREE.Euler(0.32, -0.10, rFlex, "XYZ");
-    const rHandEuler = new THREE.Euler(rHandPitch, rHandYaw, -0.12, "XYZ");
+    this.leftArmQuat.setFromEuler(new THREE.Euler(lPitch, lYaw, lRoll, "XYZ"));
+    this.leftForeArmQuat.setFromEuler(new THREE.Euler(0.32, 0.10, lFlex, "XYZ"));
+    this.leftHandQuat.setFromEuler(new THREE.Euler(lHandPitch, lHandYaw, 0.12, "XYZ"));
 
-    this.leftArmQuat.setFromEuler(lArmEuler);
-    this.leftForeArmQuat.setFromEuler(lForeEuler);
-    this.leftHandQuat.setFromEuler(lHandEuler);
+    this.rightArmQuat.setFromEuler(new THREE.Euler(rPitch, rYaw, rRoll, "XYZ"));
+    this.rightForeArmQuat.setFromEuler(new THREE.Euler(0.32, -0.10, rFlex, "XYZ"));
+    this.rightHandQuat.setFromEuler(new THREE.Euler(rHandPitch, rHandYaw, -0.12, "XYZ"));
 
-    this.rightArmQuat.setFromEuler(rArmEuler);
-    this.rightForeArmQuat.setFromEuler(rForeEuler);
-    this.rightHandQuat.setFromEuler(rHandEuler);
-  }
-
-  /**
-   * Computes Target Pointing Pose.
-   * - Nearest arm executes a comfortable BENT-ELBOW reach toward target.
-   * - Supporting opposite arm holds an open waist gesture (never pinned/frozen).
-   */
-  private computePointingPose(time: number): void {
-    const isLeft = this.pointingSide === "left";
-    const sign = isLeft ? 1 : -1;
-
-    const dist = Math.hypot(this.currentAimX, this.currentAimY);
-    const nx = this.currentAimX / Math.max(1, dist);
-    const ny = this.currentAimY / Math.max(1, dist);
-
-    // Elevation pitch (clamped to comfortable range: -0.35 to +0.35)
-    const targetPitchNorm = THREE.MathUtils.clamp(-ny * 0.5, -0.35, 0.35);
-
-    // Horizontal reach (clamped so hand stays in comfortable forward arc)
-    const targetYawNorm = THREE.MathUtils.clamp(Math.abs(nx) * 0.4, 0.10, 0.32);
-
-    const microSway = Math.sin(time * 2.0) * 0.012;
-
-    // --- Active Pointing Arm (Bent-Elbow Reach) ---
-    // Upper arm: kept comfortably downward-forward, pitch 0.78..0.98 rad (never horizontal!)
-    const pointArmX = 0.88 - targetPitchNorm * 0.3 + microSway;
-    const pointArmY = sign * (0.22 + targetYawNorm * 0.25);
-    const pointArmZ = sign * (0.05 + targetYawNorm * 0.20);
-
-    // Forearm: Bent elbow (70 to 80 deg bend, flex 1.25..1.42 rad)
-    const pointFlex = sign * (1.35 - (dist > 300 ? 0.08 : 0.0) + microSway * 0.5);
-    const pointForeX = 0.28;
-    const pointForeY = sign * 0.10;
-
-    // Hand: Palm angled comfortably toward viewer/target
-    const pointHandX = -0.02 + microSway * 0.5;
-    const pointHandY = sign * 0.12;
-    const pointHandZ = sign * 0.10;
-
-    // --- Supporting Opposite Arm (Waist/Chest resting gesture) ---
-    // The opposite arm never freezes stiffly; it rests with bent elbow at the waist
-    const supArmX = 1.06 + Math.sin(time * 1.8) * 0.015;
-    const supArmY = -sign * 0.12;
-    const supArmZ = sign * 0.22;
-
-    const supFlex = -sign * (1.36 + Math.sin(time * 1.8 + 0.5) * 0.02);
-    const supForeX = 0.34;
-    const supForeY = -sign * 0.08;
-
-    const supHandX = 0.02;
-    const supHandY = -sign * 0.14;
-    const supHandZ = sign * 0.08;
-
-    if (isLeft) {
-      // Left arm is pointing, Right arm is supporting
-      const lArmE = new THREE.Euler(pointArmX, pointArmY, pointArmZ, "XYZ");
-      const lForeE = new THREE.Euler(pointForeX, pointForeY, pointFlex, "XYZ");
-      const lHandE = new THREE.Euler(pointHandX, pointHandY, pointHandZ, "XYZ");
-
-      const rArmE = new THREE.Euler(supArmX, supArmY, supArmZ, "XYZ");
-      const rForeE = new THREE.Euler(supForeX, supForeY, supFlex, "XYZ");
-      const rHandE = new THREE.Euler(supHandX, supHandY, supHandZ, "XYZ");
-
-      this.leftArmQuat.setFromEuler(lArmE);
-      this.leftForeArmQuat.setFromEuler(lForeE);
-      this.leftHandQuat.setFromEuler(lHandE);
-
-      this.rightArmQuat.setFromEuler(rArmE);
-      this.rightForeArmQuat.setFromEuler(rForeE);
-      this.rightHandQuat.setFromEuler(rHandE);
-    } else {
-      // Right arm is pointing, Left arm is supporting
-      const rArmE = new THREE.Euler(pointArmX, pointArmY, pointArmZ, "XYZ");
-      const rForeE = new THREE.Euler(pointForeX, pointForeY, pointFlex, "XYZ");
-      const rHandE = new THREE.Euler(pointHandX, pointHandY, pointHandZ, "XYZ");
-
-      const lArmE = new THREE.Euler(supArmX, supArmY, supArmZ, "XYZ");
-      const lForeE = new THREE.Euler(supForeX, supForeY, supFlex, "XYZ");
-      const lHandE = new THREE.Euler(supHandX, supHandY, supHandZ, "XYZ");
-
-      this.rightArmQuat.setFromEuler(rArmE);
-      this.rightForeArmQuat.setFromEuler(rForeE);
-      this.rightHandQuat.setFromEuler(rHandE);
-
-      this.leftArmQuat.setFromEuler(lArmE);
-      this.leftForeArmQuat.setFromEuler(lForeE);
-      this.leftHandQuat.setFromEuler(lHandE);
-    }
+    this.applyFingerPoses("Left", "present");
+    this.applyFingerPoses("Right", "present");
   }
 }

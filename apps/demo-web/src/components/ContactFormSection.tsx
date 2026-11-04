@@ -15,7 +15,7 @@ export const ContactFormSection: React.FC = () => {
   };
 
   return (
-    <section id="contact" style={{ padding: "80px 0" }}>
+    <section id="contact" data-guide="contact" style={{ padding: "80px 0" }}>
       <div className="container" style={{ maxWidth: "700px" }}>
         <div style={{ textAlign: "center", marginBottom: "40px" }}>
           <h2 style={{ fontSize: "36px", marginBottom: "12px" }}>
@@ -131,7 +131,7 @@ export const ContactFormSection: React.FC = () => {
               </div>
 
               <div style={{ marginTop: "10px" }}>
-                <button id="btn-submit-contact" type="submit" className="btn-primary" style={{ width: "100%" }}>
+                <button id="btn-submit-contact" data-guide="contact-submit" type="submit" className="btn-primary" style={{ width: "100%" }}>
                   Submit Inquiry
                 </button>
               </div>

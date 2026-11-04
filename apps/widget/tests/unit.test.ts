@@ -253,6 +253,78 @@ test("PointingController: aims with closest arm and handles edge cases", () => {
   assert.equal(pointer.isPointing(), false);
 });
 
+test("PointingController: contact form scenario selects nearest arm and articulates fingers", () => {
+  const pointer = new PointingController();
+  global.window = { innerWidth: 1440, innerHeight: 900 } as any;
+
+  // Avatar docked at left side of screen
+  const avatarEl = {
+    getBoundingClientRect: () => ({
+      left: 40,
+      top: 150,
+      width: 290,
+      height: 550,
+      right: 330,
+      bottom: 700,
+    }),
+  } as any;
+
+  // Contact form Full Name input field at right side of avatar
+  const fullNameField = {
+    left: 650,
+    right: 1050,
+    top: 320,
+    bottom: 364,
+    width: 400,
+    height: 44,
+  } as DOMRect;
+
+  // 1. Point style on form field
+  const res = pointer.setTarget(fullNameField, avatarEl, null, null, "point");
+  assert.equal(res.isEdgeCase, false);
+  // Target direction is screen-right; nearest arm without crossing torso is LeftArm
+  assert.equal(pointer.getActiveSide(), "right");
+  assert.equal(pointer.getActiveArm(), "LeftArm");
+  assert.equal(pointer.isPointing(), true);
+
+  // Advance time to allow smooth aim blend
+  let state = pointer.update(0.1, 1.0);
+  for (let i = 0; i < 10; i++) {
+    state = pointer.update(0.05, 1.0 + i * 0.05);
+  }
+
+  assert.ok(state.weight > 0.5);
+  assert.equal(state.pointingSide, "right");
+  assert.equal(state.style, "point");
+
+  // Verify finger articulation in pointing style:
+  // Index finger extended straight, other fingers curled into palm
+  const leftFingers = state.left.fingers;
+  assert.ok(leftFingers["LeftHandIndex1"]);
+  assert.ok(leftFingers["LeftHandMiddle1"]);
+  assert.ok(leftFingers["LeftHandPinky1"]);
+
+  // In Three.js quaternions, euler rotation around X gives curl
+  const indexEuler = new THREE.Euler().setFromQuaternion(leftFingers["LeftHandIndex1"], "XYZ");
+  const middleEuler = new THREE.Euler().setFromQuaternion(leftFingers["LeftHandMiddle1"], "XYZ");
+  const pinkyEuler = new THREE.Euler().setFromQuaternion(leftFingers["LeftHandPinky1"], "XYZ");
+
+  // Index extended straight (near 0 rad)
+  assert.ok(Math.abs(indexEuler.x) < 0.1, `Index finger should be straight, got ${indexEuler.x}`);
+  // Middle & pinky curled (> 0.8 rad)
+  assert.ok(middleEuler.x > 0.8, `Middle finger should be curled, got ${middleEuler.x}`);
+  assert.ok(pinkyEuler.x > 0.8, `Pinky finger should be curled, got ${pinkyEuler.x}`);
+
+  // 2. Present style on section
+  pointer.setTarget(fullNameField, avatarEl, null, null, "present");
+  for (let i = 0; i < 10; i++) {
+    state = pointer.update(0.05, 2.0 + i * 0.05);
+  }
+  assert.equal(state.style, "present");
+  const presentMiddle = new THREE.Euler().setFromQuaternion(state.left.fingers["LeftHandMiddle1"], "XYZ");
+  assert.ok(presentMiddle.x < 0.4, `In present style fingers should be softly open, got ${presentMiddle.x}`);
+});
+
 test("FormStateWatcher: coarse state detection never leaks input value", () => {
   const mockPassword = {
     type: "password",
@@ -507,3 +579,178 @@ test("TourController: resets state and status to idle on stop and completion", (
   assert.equal(controller.getCurrentIndex(), -1);
   assert.equal(controller.getTotalSteps(), 0);
 });
+
+test("TourController: 11-state machine, bookmarking, and step navigation", () => {
+  const { TourController, DEFAULT_PAGE_TOUR } = require("../src/conversation/tour-controller");
+  const controller = new TourController();
+
+  assert.equal(controller.getState(), "idle");
+  assert.equal(controller.getStatus(), "idle");
+
+  const stateHistory: string[] = [];
+  controller.setCallbacks(
+    undefined,
+    (state) => {
+      stateHistory.push(state);
+    }
+  );
+
+  // 1. Start tour
+  controller.start(DEFAULT_PAGE_TOUR);
+  assert.equal(controller.getCurrentIndex(), 0);
+  assert.equal(controller.getTotalSteps(), DEFAULT_PAGE_TOUR.length);
+  assert.equal(controller.getStatus(), "running");
+
+  // Check progress
+  const p1 = controller.getProgress();
+  assert.equal(p1.currentIndex, 0);
+  assert.equal(p1.isBookmarked, false);
+  assert.ok(p1.percent > 0);
+
+  // 2. Pause and Resume
+  controller.pause();
+  assert.equal(controller.getState(), "paused");
+  assert.equal(controller.getStatus(), "paused");
+
+  controller.resume();
+  assert.equal(controller.getState(), "navigating");
+  assert.equal(controller.getStatus(), "running");
+
+  // 3. Conversational Interruption & Bookmark
+  controller.next(); // move to step 1
+  assert.equal(controller.getCurrentIndex(), 1);
+  controller.interrupt();
+  assert.equal(controller.getState(), "interrupted");
+  assert.equal(controller.getStatus(), "paused");
+  assert.equal(controller.getProgress().isBookmarked, true);
+
+  // 4. Resume from bookmark
+  controller.resumeFromBookmark();
+  assert.equal(controller.getCurrentIndex(), 1);
+  assert.equal(controller.getState(), "navigating");
+
+  // 5. Previous and Skip
+  controller.previous();
+  assert.equal(controller.getCurrentIndex(), 0);
+
+  controller.skip();
+  assert.equal(controller.getCurrentIndex(), 1);
+
+  // 6. Stop
+  controller.stop();
+  assert.equal(controller.getState(), "idle");
+  assert.equal(controller.getStatus(), "idle");
+  assert.equal(controller.getCurrentIndex(), -1);
+});
+
+test("AudioPlayer: mute toggle and state management", () => {
+  const { audioPlayer } = require("../src/voice/audio-player");
+  audioPlayer.setMuted(false);
+  assert.equal(audioPlayer.isMuted(), false);
+
+  const m1 = audioPlayer.toggleMute();
+  assert.equal(m1, true);
+  assert.equal(audioPlayer.isMuted(), true);
+
+  const m2 = audioPlayer.toggleMute();
+  assert.equal(m2, false);
+  assert.equal(audioPlayer.isMuted(), false);
+
+  audioPlayer.setMuted(true);
+  assert.equal(audioPlayer.isMuted(), true);
+  audioPlayer.setMuted(false);
+});
+
+test("ExploreModeController: activation, key handling, and jump trigger", () => {
+  const { ExploreModeController } = require("../src/avatar/explore-controller");
+
+  const mockStage = {
+    getRig: () => ({
+      animController: {
+        setLocomotion: () => {},
+      },
+      setMeshRotationY: () => {},
+    }),
+  } as any;
+
+  let stateActive = false;
+  const explore = new ExploreModeController(mockStage, {
+    onStateChange: (active: boolean) => {
+      stateActive = active;
+    },
+    speed: 300,
+  });
+
+  const mockAvatarEl = {
+    getBoundingClientRect: () => ({ left: 200, top: 400, width: 200, height: 400 }),
+    style: { left: "", top: "", right: "", bottom: "" },
+  } as any;
+  explore.setAvatarElement(mockAvatarEl);
+
+  assert.equal(explore.isRunning(), false);
+
+  // Enable
+  explore.enable();
+  assert.equal(explore.isRunning(), true);
+  assert.equal(stateActive, true);
+  assert.equal(mockAvatarEl.style.left, "200px");
+  assert.equal(mockAvatarEl.style.top, "400px");
+
+  // Disable
+  explore.disable();
+  assert.equal(explore.isRunning(), false);
+  assert.equal(stateActive, false);
+
+  // Toggle
+  const nowActive = explore.toggle();
+  assert.equal(nowActive, true);
+  explore.disable();
+});
+
+test("TargetResolver & NodeRegistry: data-guide attribute resolution", () => {
+  const { resolveTargetElement } = require("../src/navigation/target-resolver");
+  const { nodeRegistry } = require("../src/page/node-registry");
+
+  const mockAbout = {
+    tagName: "SECTION",
+    isConnected: true,
+    getAttribute: (attr: string) => (attr === "data-guide" ? "about" : null),
+    getBoundingClientRect: () => ({ width: 800, height: 400, left: 100, right: 900, top: 100, bottom: 500 }),
+  } as any;
+
+  global.document = {
+    querySelector: (sel: string) => {
+      if (sel === "[data-guide='about']" || sel === "[data-guide=\"about\"]" || sel === "about") {
+        return mockAbout;
+      }
+      return null;
+    },
+    getElementById: () => null,
+  } as any;
+
+  const resolved = resolveTargetElement("[data-guide='about']");
+  assert.equal(resolved, mockAbout);
+
+  const registeredId = nodeRegistry.getOrCreateId(mockAbout, "section");
+  assert.ok(registeredId.includes("guide-about"));
+  assert.equal(nodeRegistry.resolve(registeredId), mockAbout);
+});
+
+test("HumanoidClips: includes celebrating, greeting, and goodbye procedural clips", () => {
+  const clips = createHumanoidClips();
+
+  assert.ok(clips["celebrating"], "Missing celebrating clip");
+  assert.ok(clips["greeting"], "Missing greeting clip");
+  assert.ok(clips["goodbye"], "Missing goodbye clip");
+
+  assert.ok(clips["celebrating"].duration > 1.0);
+  assert.ok(clips["greeting"].duration > 1.0);
+  assert.ok(clips["goodbye"].duration > 1.0);
+
+  // Verify celebrating has arm elevation tracks
+  const celebTracks = clips["celebrating"].tracks.map((t) => t.name);
+  assert.ok(celebTracks.includes("LeftArm.quaternion"));
+  assert.ok(celebTracks.includes("RightArm.quaternion"));
+  assert.ok(celebTracks.includes("Hips.position"));
+});
+

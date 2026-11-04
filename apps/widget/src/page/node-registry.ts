@@ -9,6 +9,13 @@ export class NodeRegistry {
       return existing;
     }
 
+    const guideAttr = el.getAttribute("data-guide");
+    if (guideAttr) {
+      this.idToElement.set(guideAttr, el);
+      this.idToElement.set(`[data-guide='${guideAttr}']`, el);
+      this.idToElement.set(`[data-guide="${guideAttr}"]`, el);
+    }
+
     const attrId = el.getAttribute("data-site-guide-node-id");
     if (attrId && !this.idToElement.has(attrId)) {
       this.elementToId.set(el, attrId);
@@ -18,8 +25,9 @@ export class NodeRegistry {
 
     const tag = el.tagName.toLowerCase();
     const idAttr = el.id ? `_${el.id.replace(/[^a-zA-Z0-9_-]/g, "")}` : "";
+    const guideSuffix = guideAttr ? `_guide-${guideAttr}` : "";
     this.counter += 1;
-    const generatedId = `node_${roleHint || tag}${idAttr}_${this.counter.toString(16)}`;
+    const generatedId = `node_${roleHint || tag}${idAttr}${guideSuffix}_${this.counter.toString(16)}`;
 
     try {
       el.setAttribute("data-site-guide-node-id", generatedId);
@@ -33,7 +41,13 @@ export class NodeRegistry {
   }
 
   public resolve(id: string): Element | null {
-    const el = this.idToElement.get(id);
+    let el: Element | null | undefined = this.idToElement.get(id);
+    if (!el && typeof document !== "undefined") {
+      el = document.querySelector(id.startsWith("[") ? id : `[data-guide="${id}"]`) || document.getElementById(id) || null;
+      if (el) {
+        this.idToElement.set(id, el);
+      }
+    }
     if (!el || !el.isConnected) {
       this.idToElement.delete(id);
       return null;

@@ -1,9 +1,10 @@
 import { ChatController, ChatMessage, AssistantState } from "../conversation/chat-controller";
 import { AvatarStage } from "../avatar/avatar-stage";
-import { tourController } from "../conversation/tour-controller";
+import { tourController, TourEngineState, TourProgress, TourStop } from "../conversation/tour-controller";
 import { speechRecognizer } from "../voice/speech-recognition";
 import { microphoneController } from "../voice/microphone-controller";
 import { audioPlayer } from "../voice/audio-player";
+import { ExploreModeController } from "../avatar/explore-controller";
 
 export interface WidgetViewOptions {
   avatarVisible?: boolean;
@@ -14,6 +15,7 @@ export class WidgetView {
   private shadowRoot: ShadowRoot;
   private chatController: ChatController;
   private stage: AvatarStage | null = null;
+  private exploreController: ExploreModeController | null = null;
 
   // DOM Elements
   private launcherBtn: HTMLElement | null = null;
@@ -25,8 +27,30 @@ export class WidgetView {
   private inputField!: HTMLInputElement;
   private micBtn!: HTMLElement;
   private sendBtn!: HTMLElement;
+
+  // Speech Bubble Elements (attached to Avatar)
+  private speechBubble!: HTMLElement;
+  private speechTextEl!: HTMLElement;
+  private speechInstructionEl!: HTMLElement;
+  private speechTypingEl!: HTMLElement;
+
+  // Tour Minimal HUD Elements
   private tourBar!: HTMLElement;
   private tourInfo!: HTMLElement;
+  private tourProgressBar!: HTMLElement;
+  private tourPlayPauseBtn!: HTMLElement;
+  private tourPrevBtn!: HTMLElement;
+  private tourNextBtn!: HTMLElement;
+  private tourExploreBtn!: HTMLElement;
+  private tourMuteBtn!: HTMLElement;
+  private tourStopBtn!: HTMLElement;
+
+  // Free Roam / Explore Mode HUD
+  private exploreBar!: HTMLElement;
+  private exploreResumeBtn!: HTMLElement;
+  private exploreExitBtn!: HTMLElement;
+
+  // Floating Dock Elements
   private toggleAvatarBtn: HTMLElement | null = null;
   private dockBar!: HTMLElement;
   private dockGuideBtn!: HTMLElement;
@@ -37,6 +61,7 @@ export class WidgetView {
   private avatarVisible: boolean = true;
   private chatOpen: boolean = false;
   private isRecording: boolean = false;
+  private keydownHandler: ((e: KeyboardEvent) => void) | null = null;
 
   private dotColors = [
     "#ec4899", // pink/magenta
@@ -67,6 +92,16 @@ export class WidgetView {
     if (!this.avatarVisible) {
       this.stage.pause();
     }
+
+    // Initialize ExploreModeController with avatar stage and layer container
+    this.exploreController = new ExploreModeController(this.stage, {
+      onStateChange: (active: boolean) => this.handleExploreStateChange(active),
+    });
+    this.exploreController.setAvatarElement(this.avatarLayer);
+  }
+
+  public getExploreController(): ExploreModeController | null {
+    return this.exploreController;
   }
 
   public getCanvasContainer(): HTMLElement {
@@ -80,6 +115,18 @@ export class WidgetView {
     root.innerHTML = `
       <!-- Independent 3D Avatar Layer (Rendered in front of chat, z-index: 1000000) -->
       <div class="sg-avatar-layer beside-chat" id="sg-avatar-layer">
+        <!-- 3D Avatar Speech Bubble Attached to Guide -->
+        <div class="sg-avatar-speech-bubble sg-hidden" id="sg-speech-bubble" role="status" aria-live="polite">
+          <div class="sg-bubble-header">
+            <span class="sg-bubble-tag">✨ Ava Guide</span>
+            <div class="sg-bubble-typing sg-hidden" id="sg-speech-typing">
+              <span></span><span></span><span></span>
+            </div>
+          </div>
+          <div class="sg-bubble-content" id="sg-speech-text"></div>
+          <div class="sg-bubble-instruction sg-hidden" id="sg-speech-instruction"></div>
+        </div>
+
         <div class="sg-avatar-canvas-wrap" id="sg-avatar-wrap" role="presentation" aria-hidden="true"></div>
       </div>
 
@@ -109,14 +156,31 @@ export class WidgetView {
         </button>
       </div>
 
-      <!-- Tour Toolbar (visible ONLY during guided tours, floating above dock) -->
+      <!-- Upgraded Minimal Tour HUD Toolbar (floating above dock) -->
       <div class="sg-tour-bar sg-hidden" id="sg-tour-bar">
-        <span id="sg-tour-info"></span>
-        <div class="sg-tour-controls">
-          <button class="sg-tour-btn" id="sg-tour-prev">Prev</button>
-          <button class="sg-tour-btn" id="sg-tour-next">Next</button>
-          <button class="sg-tour-btn" id="sg-tour-stop">Stop</button>
+        <div class="sg-tour-header">
+          <span class="sg-tour-badge">GUIDED TOUR</span>
+          <span class="sg-tour-info" id="sg-tour-info">Step 1 of 5</span>
         </div>
+        <div class="sg-tour-progress-track">
+          <div class="sg-tour-progress-fill" id="sg-tour-progress-fill"></div>
+        </div>
+        <div class="sg-tour-controls">
+          <button class="sg-tour-btn" id="sg-tour-prev" title="Previous Stop (Left Arrow)">◀ Prev</button>
+          <button class="sg-tour-btn sg-tour-btn-primary" id="sg-tour-play-pause" title="Pause / Resume (Space)">❚❚ Pause</button>
+          <button class="sg-tour-btn" id="sg-tour-next" title="Next Stop (Right Arrow)">Next ▶</button>
+          <button class="sg-tour-btn sg-tour-explore-btn" id="sg-tour-explore" title="Free Roam Explore (E)">🎮 Explore</button>
+          <button class="sg-tour-btn sg-tour-mute-btn" id="sg-tour-mute" title="Toggle Mute (M)">🔊</button>
+          <button class="sg-tour-btn sg-tour-close-btn" id="sg-tour-stop" title="End Tour (Esc)">✕</button>
+        </div>
+      </div>
+
+      <!-- Explore Mode HUD Overlay -->
+      <div class="sg-explore-bar sg-hidden" id="sg-explore-bar">
+        <span class="sg-explore-pill">🎮 FREE ROAM</span>
+        <span class="sg-explore-hint">WASD / Arrow Keys to walk • Space to Jump</span>
+        <button class="sg-tour-btn sg-tour-btn-primary" id="sg-explore-resume" title="Resume Guided Tour">Resume Tour</button>
+        <button class="sg-tour-btn sg-tour-close-btn" id="sg-explore-exit" title="Exit Explore Mode">✕ Exit</button>
       </div>
 
       <!-- Independent Chat Panel (Rendered on right, z-index: 1000000) -->
@@ -213,8 +277,30 @@ export class WidgetView {
     this.inputField = this.shadowRoot.getElementById("sg-input") as HTMLInputElement;
     this.micBtn = this.shadowRoot.getElementById("sg-btn-mic")!;
     this.sendBtn = this.shadowRoot.getElementById("sg-btn-send")!;
+
+    // Speech Bubble bindings
+    this.speechBubble = this.shadowRoot.getElementById("sg-speech-bubble")!;
+    this.speechTextEl = this.shadowRoot.getElementById("sg-speech-text")!;
+    this.speechInstructionEl = this.shadowRoot.getElementById("sg-speech-instruction")!;
+    this.speechTypingEl = this.shadowRoot.getElementById("sg-speech-typing")!;
+
+    // Tour Bar bindings
     this.tourBar = this.shadowRoot.getElementById("sg-tour-bar")!;
     this.tourInfo = this.shadowRoot.getElementById("sg-tour-info")!;
+    this.tourProgressBar = this.shadowRoot.getElementById("sg-tour-progress-fill")!;
+    this.tourPlayPauseBtn = this.shadowRoot.getElementById("sg-tour-play-pause")!;
+    this.tourPrevBtn = this.shadowRoot.getElementById("sg-tour-prev")!;
+    this.tourNextBtn = this.shadowRoot.getElementById("sg-tour-next")!;
+    this.tourExploreBtn = this.shadowRoot.getElementById("sg-tour-explore")!;
+    this.tourMuteBtn = this.shadowRoot.getElementById("sg-tour-mute")!;
+    this.tourStopBtn = this.shadowRoot.getElementById("sg-tour-stop")!;
+
+    // Explore Bar bindings
+    this.exploreBar = this.shadowRoot.getElementById("sg-explore-bar")!;
+    this.exploreResumeBtn = this.shadowRoot.getElementById("sg-explore-resume")!;
+    this.exploreExitBtn = this.shadowRoot.getElementById("sg-explore-exit")!;
+
+    // Dock Bar bindings
     this.toggleAvatarBtn = this.shadowRoot.getElementById("sg-btn-toggle-avatar");
     this.dockBar = this.shadowRoot.getElementById("sg-dock-bar")!;
     this.dockGuideBtn = this.shadowRoot.getElementById("sg-dock-guide")!;
@@ -267,33 +353,195 @@ export class WidgetView {
       this.openChat();
     });
 
-    // Tour controls
-    this.shadowRoot.getElementById("sg-tour-next")?.addEventListener("click", () => tourController.next());
-    this.shadowRoot.getElementById("sg-tour-prev")?.addEventListener("click", () => tourController.previous());
-    this.shadowRoot.getElementById("sg-tour-stop")?.addEventListener("click", () => {
-      tourController.stop();
-      this.hideTourBar();
-      if (this.stage) {
-        this.stage.stopPointing();
-        this.stage.returnToDock();
-        this.stage.setState("idle");
-      }
+    // Upgraded Tour HUD Controls
+    this.tourNextBtn.addEventListener("click", () => tourController.next());
+    this.tourPrevBtn.addEventListener("click", () => tourController.previous());
+    this.tourPlayPauseBtn.addEventListener("click", () => this.handleTourPlayPause());
+    this.tourExploreBtn.addEventListener("click", () => this.handleStartExplore());
+    this.tourMuteBtn.addEventListener("click", () => this.handleToggleMute());
+    this.tourStopBtn.addEventListener("click", () => this.handleTourStop());
+
+    // Explore Mode HUD Controls
+    this.exploreResumeBtn.addEventListener("click", () => {
+      this.exploreController?.disable();
+      tourController.resume();
+    });
+    this.exploreExitBtn.addEventListener("click", () => {
+      this.exploreController?.disable();
     });
 
-    // Escape key closes the chat panel
-    this.shell.addEventListener("keydown", (e) => {
-      if (e.key === "Escape") {
-        if (tourController.getStatus() === "running") {
-          tourController.stop();
-          this.hideTourBar();
-        } else {
+    // Global keyboard shortcuts for hands-free interactive experience
+    this.keydownHandler = (e: KeyboardEvent) => {
+      const activeEl = document.activeElement;
+      const isInput =
+        activeEl &&
+        (activeEl.tagName === "INPUT" ||
+          activeEl.tagName === "TEXTAREA" ||
+          (activeEl as HTMLElement).isContentEditable);
+
+      if (isInput) return;
+
+      const code = e.code || e.key;
+
+      if (code === "Escape") {
+        if (this.exploreController?.isRunning()) {
+          this.exploreController.disable();
+          return;
+        }
+        if (tourController.getStatus() === "running" || tourController.getState() === "paused") {
+          this.handleTourStop();
+          return;
+        }
+        if (this.chatOpen) {
           this.closeChat();
         }
+        return;
       }
-    });
+
+      // 'KeyE' toggles free roam exploration mode
+      if (code === "KeyE" && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        if (this.exploreController?.isRunning()) {
+          this.exploreController.disable();
+        } else if (this.avatarVisible) {
+          if (tourController.getStatus() === "running") {
+            tourController.pause();
+          }
+          this.exploreController?.enable();
+        }
+        return;
+      }
+
+      // 'KeyM' toggles speech audio mute
+      if (code === "KeyM" && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        this.handleToggleMute();
+        return;
+      }
+
+      // Left/Right arrow keys navigate tour steps
+      if (tourController.getStatus() === "running" || tourController.getState() === "paused") {
+        if (code === "ArrowLeft") {
+          e.preventDefault();
+          tourController.previous();
+        } else if (code === "ArrowRight") {
+          e.preventDefault();
+          tourController.next();
+        }
+      }
+    };
+    window.addEventListener("keydown", this.keydownHandler);
+
+    // Wire tourController callbacks for HUD synchronization
+    tourController.setCallbacks(
+      (stop, idx, total) => {
+        this.updateTourProgress(idx, total, stop);
+      },
+      (state, progress) => {
+        this.handleTourStateChange(state, progress);
+      },
+      () => {
+        this.hideTourBar();
+        this.updateSpeechBubble("", false);
+      }
+    );
 
     // Mic button inside input bar
     this.micBtn.addEventListener("click", () => this.toggleVoice());
+  }
+
+  // ==========================================
+  // SPEECH BUBBLE & HUD INTERACTION
+  // ==========================================
+
+  public updateSpeechBubble(text: string, isSpeaking: boolean, instruction?: string): void {
+    if (!text && !instruction) {
+      this.speechBubble.classList.add("sg-hidden");
+      return;
+    }
+
+    this.speechBubble.classList.remove("sg-hidden");
+    this.speechTextEl.textContent = text;
+
+    if (instruction) {
+      this.speechInstructionEl.textContent = instruction;
+      this.speechInstructionEl.classList.remove("sg-hidden");
+    } else {
+      this.speechInstructionEl.classList.add("sg-hidden");
+    }
+
+    if (isSpeaking) {
+      this.speechTypingEl.classList.remove("sg-hidden");
+    } else {
+      this.speechTypingEl.classList.add("sg-hidden");
+    }
+  }
+
+  private handleTourPlayPause(): void {
+    if (tourController.getState() === "paused") {
+      tourController.resume();
+      this.tourPlayPauseBtn.innerHTML = "❚❚ Pause";
+    } else {
+      tourController.pause();
+      this.tourPlayPauseBtn.innerHTML = "▶ Resume";
+    }
+  }
+
+  private handleStartExplore(): void {
+    tourController.pause();
+    this.exploreController?.enable();
+  }
+
+  private handleToggleMute(): void {
+    const isMuted = audioPlayer.toggleMute();
+    this.tourMuteBtn.textContent = isMuted ? "🔇" : "🔊";
+    this.tourMuteBtn.title = isMuted ? "Unmute Voice (M)" : "Mute Voice (M)";
+  }
+
+  private handleTourStop(): void {
+    tourController.stop();
+    this.hideTourBar();
+    this.updateSpeechBubble("", false);
+    if (this.stage) {
+      this.stage.stopPointing();
+      this.stage.returnToDock();
+      this.stage.setState("idle");
+    }
+  }
+
+  private updateTourProgress(index: number, total: number, stop?: TourStop | null): void {
+    const title = stop?.title || `Step ${index + 1}`;
+    this.tourInfo.textContent = `Step ${index + 1} of ${total} • ${title}`;
+    const percent = total > 0 ? Math.round(((index + 1) / total) * 100) : 0;
+    this.tourProgressBar.style.width = `${percent}%`;
+  }
+
+  private handleTourStateChange(state: TourEngineState, progress: TourProgress): void {
+    if (state === "idle" || state === "completed") {
+      this.hideTourBar();
+      this.updateSpeechBubble("", false);
+    } else {
+      if (!this.exploreController?.isRunning()) {
+        this.tourBar.classList.remove("sg-hidden");
+      }
+      if (state === "paused") {
+        this.tourPlayPauseBtn.innerHTML = "▶ Resume";
+      } else {
+        this.tourPlayPauseBtn.innerHTML = "❚❚ Pause";
+      }
+      this.updateTourProgress(progress.currentIndex, progress.totalSteps, progress.currentStop);
+    }
+  }
+
+  private handleExploreStateChange(active: boolean): void {
+    if (active) {
+      this.exploreBar.classList.remove("sg-hidden");
+      this.tourBar.classList.add("sg-hidden");
+      this.updateSpeechBubble("", false);
+    } else {
+      this.exploreBar.classList.add("sg-hidden");
+      if (tourController.getStatus() !== "idle") {
+        this.tourBar.classList.remove("sg-hidden");
+      }
+    }
   }
 
   // ==========================================
@@ -538,14 +786,6 @@ export class WidgetView {
       error: "AI Guide: Error",
     };
     this.statusIndicator.title = labels[state] || "AI Guide: Ready";
-
-    // Show / hide tour toolbar ONLY when actively running
-    if (tourController.getStatus() === "running") {
-      this.tourBar.classList.remove("sg-hidden");
-      this.tourInfo.textContent = `Tour: Step ${tourController.getCurrentIndex() + 1} of ${tourController.getTotalSteps()}`;
-    } else {
-      this.hideTourBar();
-    }
   }
 
   public hideTourBar(): void {
@@ -555,5 +795,16 @@ export class WidgetView {
     if (this.tourInfo) {
       this.tourInfo.textContent = "";
     }
+    if (this.tourProgressBar) {
+      this.tourProgressBar.style.width = "0%";
+    }
+  }
+
+  public destroy(): void {
+    if (this.keydownHandler) {
+      window.removeEventListener("keydown", this.keydownHandler);
+      this.keydownHandler = null;
+    }
+    this.exploreController?.disable();
   }
 }

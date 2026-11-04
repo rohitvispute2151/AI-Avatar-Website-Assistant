@@ -106,7 +106,9 @@ export class SiteGuideElement extends HTMLElement {
       () => this.widgetView?.updateStatus("speaking"),
       () => this.widgetView?.updateStatus("idle"),
       (explaining: boolean) => this.widgetView?.setExplainingMode(explaining),
-      () => this.widgetView?.getChatRect() || null
+      () => this.widgetView?.getChatRect() || null,
+      (text: string, isSpeaking: boolean, instruction?: string) =>
+        this.widgetView?.updateSpeechBubble(text, isSpeaking, instruction)
     );
     this.chatController.setActionExecutor(this.actionExecutor);
 
@@ -183,7 +185,24 @@ export class SiteGuideElement extends HTMLElement {
     }
   }
 
+  public startTour(): void {
+    this.chatController?.sendMessage("Walk me through this page");
+  }
+
+  public enableExploreMode(): void {
+    this.widgetView?.getExploreController()?.enable();
+  }
+
+  public disableExploreMode(): void {
+    this.widgetView?.getExploreController()?.disable();
+  }
+
+  public isExploreMode(): boolean {
+    return this.widgetView?.getExploreController()?.isRunning() ?? false;
+  }
+
   public destroy(): void {
+    this.widgetView?.destroy();
     this.mutationWatcher?.stop();
     this.formStateWatcher?.stop();
     this.avatarStage?.dispose();

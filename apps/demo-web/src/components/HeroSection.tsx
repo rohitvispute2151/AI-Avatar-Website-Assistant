@@ -7,7 +7,7 @@ interface HeroProps {
 
 export const HeroSection: React.FC<HeroProps> = ({ onTogglePromo, promoActive }) => {
   return (
-    <section id="hero" style={{ paddingTop: "140px", paddingBottom: "80px", position: "relative" }}>
+    <section id="hero" data-guide="hero" style={{ paddingTop: "140px", paddingBottom: "80px", position: "relative" }}>
       <div className="glow-orb-1" />
       <div className="container" style={{ textAlign: "center", maxWidth: "900px" }}>
         <div style={{
@@ -36,7 +36,7 @@ export const HeroSection: React.FC<HeroProps> = ({ onTogglePromo, promoActive })
         </p>
 
         <div style={{ display: "flex", justifyContent: "center", gap: "16px", flexWrap: "wrap", marginBottom: "32px" }}>
-          <a href="#contact" id="hero-get-started" className="btn-primary" style={{ padding: "16px 36px", fontSize: "16px" }}>
+          <a href="#contact" id="hero-get-started" data-guide="hero-cta" className="btn-primary" style={{ padding: "16px 36px", fontSize: "16px" }}>
             Get Started Free
           </a>
           <button onClick={onTogglePromo} className="btn-secondary" style={{ padding: "16px 28px", fontSize: "14px" }}>

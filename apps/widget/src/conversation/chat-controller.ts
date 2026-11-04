@@ -2,6 +2,7 @@ import { ApiClient } from "../api/client";
 import { MutationWatcher } from "../page/mutation-watcher";
 import { ActionExecutor } from "../navigation/action-executor";
 import { TurnPlan } from "../page/manifest";
+import { tourController } from "./tour-controller";
 
 export interface ChatMessage {
   id: string;
@@ -81,8 +82,11 @@ export class ChatController {
     const trimmed = text.trim();
     if (!trimmed) return null;
 
-    // Interrupt any active tour or speech
-    if (this.actionExecutor) {
+    // Check if tour was running and handle interruption smoothly
+    const wasTourRunning = tourController.getStatus() === "running";
+    if (wasTourRunning) {
+      tourController.interrupt();
+    } else if (this.actionExecutor) {
       this.actionExecutor.stop();
     }
 

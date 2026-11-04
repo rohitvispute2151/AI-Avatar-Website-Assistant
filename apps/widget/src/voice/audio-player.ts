@@ -7,6 +7,23 @@ export class AudioPlayer {
   private isPlayingAudio = false;
   private currentObjectUrl: string | null = null;
   private onEmotionDetected?: (emotion: AvatarEmotion) => void;
+  private muted = false;
+
+  public setMuted(muted: boolean): void {
+    this.muted = muted;
+    if (muted && this.isPlaying()) {
+      this.stop();
+    }
+  }
+
+  public isMuted(): boolean {
+    return this.muted;
+  }
+
+  public toggleMute(): boolean {
+    this.setMuted(!this.muted);
+    return this.muted;
+  }
 
   public setEmotionCallback(cb: (emotion: AvatarEmotion) => void): void {
     this.onEmotionDetected = cb;
@@ -65,6 +82,17 @@ export class AudioPlayer {
     const { cleanText, emotion } = speechSynthesizer.parseEmotionAndSanitizeText(text);
     if (emotion && this.onEmotionDetected) {
       this.onEmotionDetected(emotion);
+    }
+
+    if (this.muted) {
+      if (onStart) onStart();
+      const words = cleanText.split(/\s+/).length;
+      const durationMs = Math.max(1200, Math.min(6000, (words / 3.2) * 1000));
+      setTimeout(() => {
+        this.cleanup();
+        if (onEnd) onEnd();
+      }, durationMs);
+      return { cleanText, emotion };
     }
 
     // Initialize accurate viseme sequence from text

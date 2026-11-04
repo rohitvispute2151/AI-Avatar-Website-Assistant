@@ -1,10 +1,5 @@
-import sys
-import asyncio
-
-if sys.platform == "win32":
-    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-
-from fastapi.testclient import TestClient
+import pytest
+import httpx
 from app.main import app
 from app.conversation.service import conversation_service
 from app.providers.llm.mock import MockLLMProvider
@@ -12,18 +7,24 @@ from app.providers.llm.mock import MockLLMProvider
 # Ensure mock provider is used for deterministic offline testing
 conversation_service.llm_provider = MockLLMProvider()
 
-client = TestClient(app)
+@pytest.fixture
+async def async_client():
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        yield client
 
-def test_health_check():
-    resp = client.get("/health")
+@pytest.mark.asyncio
+async def test_health_check(async_client):
+    resp = await async_client.get("/health")
     assert resp.status_code == 200
     data = resp.json()
     assert data["status"] == "healthy"
     assert "llm_provider" in data
 
-def test_session_lifecycle_and_turn():
+@pytest.mark.asyncio
+async def test_session_lifecycle_and_turn(async_client):
     # 1. Create session
-    session_resp = client.post(
+    session_resp = await async_client.post(
         "/v1/sessions",
         headers={"Origin": "http://localhost:5173"},
         json={
@@ -59,7 +60,7 @@ def test_session_lifecycle_and_turn():
                 "id": "node_about",
                 "role": "section",
                 "tag_name": "section",
-                "accessible_name": "About Us",
+                "accessible_name": "About NovaAI",
                 "text": "NovaAI builds embeddable 3D avatar guides that explain websites and guide visitors.",
                 "visible": True,
             },
@@ -87,7 +88,7 @@ def test_session_lifecycle_and_turn():
         ],
     }
     
-    man_resp = client.put(
+    man_resp = await async_client.put(
         f"/v1/sessions/{session_id}/page-manifest",
         headers=auth_header,
         json=manifest_payload,
@@ -97,7 +98,7 @@ def test_session_lifecycle_and_turn():
     assert man_resp.json()["node_count"] == 4
 
     # 3. Ask question: "What does this company do?"
-    turn1_resp = client.post(
+    turn1_resp = await async_client.post(
         f"/v1/sessions/{session_id}/turns",
         headers=auth_header,
         json={
@@ -113,7 +114,7 @@ def test_session_lifecycle_and_turn():
     assert plan1["target_node_id"] == "node_about"
 
     # 4. Ask navigation: "Where can I sign up?"
-    turn2_resp = client.post(
+    turn2_resp = await async_client.post(
         f"/v1/sessions/{session_id}/turns",
         headers=auth_header,
         json={
@@ -129,7 +130,7 @@ def test_session_lifecycle_and_turn():
     assert plan2["gesture"] == "point_right"
 
     # 5. Tour request: "Walk me through this page"
-    turn3_resp = client.post(
+    turn3_resp = await async_client.post(
         f"/v1/sessions/{session_id}/turns",
         headers=auth_header,
         json={
@@ -144,7 +145,7 @@ def test_session_lifecycle_and_turn():
     assert len(plan3["steps"]) > 0
 
     # 6. Form guidance: "Help me fill out this form"
-    turn4_resp = client.post(
+    turn4_resp = await async_client.post(
         f"/v1/sessions/{session_id}/turns",
         headers=auth_header,
         json={
@@ -159,7 +160,7 @@ def test_session_lifecycle_and_turn():
     assert plan4["target_node_id"] == "node_contact_email"
 
     # 7. Grounding abstention: Ask for unknown fact (CEO phone number)
-    turn5_resp = client.post(
+    turn5_resp = await async_client.post(
         f"/v1/sessions/{session_id}/turns",
         headers=auth_header,
         json={
@@ -174,14 +175,15 @@ def test_session_lifecycle_and_turn():
     assert "can't find" in plan5["answer"].lower() or "not" in plan5["answer"].lower()
 
     # 8. Delete session
-    del_resp = client.delete(
+    del_resp = await async_client.delete(
         f"/v1/sessions/{session_id}",
         headers=auth_header,
     )
     assert del_resp.status_code == 200
 
-def test_stale_revision_conflict():
-    sess_resp = client.post(
+@pytest.mark.asyncio
+async def test_stale_revision_conflict(async_client):
+    sess_resp = await async_client.post(
         "/v1/sessions",
         headers={"Origin": "http://localhost:5173"},
         json={"widget_id": "test", "page_url": "http://localhost:5173"},
@@ -192,7 +194,7 @@ def test_stale_revision_conflict():
     auth_header = {"Authorization": f"Bearer {token}"}
 
     # Put manifest revision 2
-    client.put(
+    await async_client.put(
         f"/v1/sessions/{session_id}/page-manifest",
         headers=auth_header,
         json={
@@ -206,7 +208,7 @@ def test_stale_revision_conflict():
     )
 
     # Submit turn with stale revision 1 -> 409 PAGE_REVISION_STALE
-    resp = client.post(
+    resp = await async_client.post(
         f"/v1/sessions/{session_id}/turns",
         headers=auth_header,
         json={"message": "hello", "page_revision": 1},

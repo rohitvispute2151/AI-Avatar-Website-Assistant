@@ -7,13 +7,16 @@ export function resolveTargetElement(nodeId: string): HTMLElement | null {
   // 1. Check nodeRegistry first
   let el: any = nodeRegistry.resolve(nodeId);
 
-  // 2. If not found in registry, check direct ID or selector
+  // 2. If not found in registry, check explicit data-guide, direct ID or CSS selector
   if (!el && typeof document !== "undefined") {
     try {
-      if (nodeId.startsWith("#")) {
-        el = document.querySelector(nodeId) || document.getElementById(nodeId.slice(1));
+      if (nodeId.startsWith("[") || nodeId.startsWith(".") || nodeId.startsWith("#")) {
+        el = document.querySelector(nodeId);
       } else {
-        el = document.getElementById(nodeId) || document.querySelector(nodeId);
+        el =
+          document.querySelector(`[data-guide="${nodeId}"]`) ||
+          document.getElementById(nodeId) ||
+          document.querySelector(nodeId);
       }
     } catch {
       // Ignore invalid selector syntax
@@ -123,17 +126,26 @@ export function findSectionForPlan(plan: TurnPlan): HTMLElement | null {
   };
 
   if (text.includes("pricing") || text.includes("plan") || text.includes("tier") || text.includes("/month")) {
-    const el = document.getElementById("pricing") || document.querySelector("section#pricing, [data-node-id*='pricing']");
+    const el =
+      document.querySelector("[data-guide='pricing']") ||
+      document.getElementById("pricing") ||
+      document.querySelector("section#pricing, [data-node-id*='pricing']");
     if (isHtmlEl(el)) return el as HTMLElement;
   }
 
   if (text.includes("feature") || text.includes("spatial") || text.includes("gesture") || text.includes("voice")) {
-    const el = document.getElementById("features") || document.querySelector("section#features, [data-node-id*='feature']");
+    const el =
+      document.querySelector("[data-guide='features']") ||
+      document.getElementById("features") ||
+      document.querySelector("section#features, [data-node-id*='feature']");
     if (isHtmlEl(el)) return el as HTMLElement;
   }
 
   if (text.includes("contact") || text.includes("sign up") || text.includes("get in touch") || text.includes("form") || text.includes("email")) {
-    const el = document.getElementById("contact") || document.querySelector("section#contact, form");
+    const el =
+      document.querySelector("[data-guide='contact']") ||
+      document.getElementById("contact") ||
+      document.querySelector("section#contact, form");
     if (isHtmlEl(el)) return el as HTMLElement;
   }
 
@@ -146,6 +158,8 @@ export function findSectionForPlan(plan: TurnPlan): HTMLElement | null {
     text.includes("turn your")
   ) {
     const el =
+      document.querySelector("[data-guide='hero']") ||
+      document.querySelector("[data-guide='about']") ||
       document.getElementById("hero") ||
       document.getElementById("about") ||
       document.querySelector("section#hero, section:first-of-type, main > section:first-of-type");

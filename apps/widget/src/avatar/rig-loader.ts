@@ -18,10 +18,13 @@ export interface AvatarRig {
   update(delta: number, time: number): void;
   setLookAtTarget(screenX: number, screenY: number): void;
   resetLookAt(): void;
+  setMeshRotationY?(rad: number): void;
+  setCamera?(camera: THREE.PerspectiveCamera | null): void;
   pointAt?(
     targetRect: DOMRect | null,
     avatarLayerEl?: HTMLElement | null,
-    chatShellEl?: HTMLElement | null
+    canvasEl?: HTMLElement | null,
+    style?: "point" | "present"
   ): void;
   stopPointing?(): void;
   dispose(): void;
@@ -51,16 +54,27 @@ class RealisticHumanoidRig implements AvatarRig {
 
   // Pointing and limb IK references
   private pointingController = new PointingController();
+  private leftShoulderBone: THREE.Bone | null = null;
+  private rightShoulderBone: THREE.Bone | null = null;
   private leftArmBone: THREE.Bone | null = null;
   private rightArmBone: THREE.Bone | null = null;
   private leftForeArmBone: THREE.Bone | null = null;
   private rightForeArmBone: THREE.Bone | null = null;
   private leftHandBone: THREE.Bone | null = null;
   private rightHandBone: THREE.Bone | null = null;
+  private baseLeftShoulderQuat = new THREE.Quaternion(0.481688, 0.492769, -0.588907, 0.422308);
+  private baseRightShoulderQuat = new THREE.Quaternion(0.481688, -0.49277, 0.588906, 0.422308);
+  private leftFingerBones: Record<string, THREE.Bone> = {};
+  private rightFingerBones: Record<string, THREE.Bone> = {};
+  private camera: THREE.PerspectiveCamera | null = null;
 
   // Procedural Look-At on top of skeletal clips
   private lookAtTargetEuler = new THREE.Euler(0, 0, 0, "YXZ");
   private currentLookAtEuler = new THREE.Euler(0, 0, 0, "YXZ");
+
+  // Root mesh yaw rotation for turning during locomotion or facing target
+  private targetMeshRotationY = 0;
+  private currentMeshRotationY = 0;
 
   // Talking gesture auto-cycling
   private talkClipIndex = 0;
@@ -86,6 +100,12 @@ class RealisticHumanoidRig implements AvatarRig {
         } else if (lower.includes("neck")) {
           this.neckBone = child;
           this.baseNeckQuat.copy(child.quaternion);
+        } else if (child.name === "LeftShoulder" || lower === "leftshoulder") {
+          this.leftShoulderBone = child;
+          this.baseLeftShoulderQuat.copy(child.quaternion);
+        } else if (child.name === "RightShoulder" || lower === "rightshoulder") {
+          this.rightShoulderBone = child;
+          this.baseRightShoulderQuat.copy(child.quaternion);
         } else if (child.name === "LeftArm" || lower === "leftarm") {
           this.leftArmBone = child;
         } else if (child.name === "RightArm" || lower === "rightarm") {
@@ -98,6 +118,10 @@ class RealisticHumanoidRig implements AvatarRig {
           this.leftHandBone = child;
         } else if (child.name === "RightHand" || lower === "righthand") {
           this.rightHandBone = child;
+        } else if (child.name.startsWith("LeftHand")) {
+          this.leftFingerBones[child.name] = child;
+        } else if (child.name.startsWith("RightHand")) {
+          this.rightFingerBones[child.name] = child;
         }
       }
     });
@@ -139,11 +163,15 @@ class RealisticHumanoidRig implements AvatarRig {
     this.facialController.resetLookAt();
   }
 
+  public setMeshRotationY(rad: number): void {
+    this.targetMeshRotationY = rad;
+  }
+
   private transitionToAction(name: string, fadeDuration = 0.35): void {
     if (this.currentActionName === name) return;
 
     const prevAction = this.actions[this.currentActionName];
-    const nextAction = this.actions[name];
+    const nextAction = this.actions[name] || this.actions["idle"];
 
     if (nextAction) {
       nextAction.reset();
@@ -173,7 +201,7 @@ class RealisticHumanoidRig implements AvatarRig {
       this.pointingController.setExplaining(false);
     }
 
-    if (locomotion === "walk") {
+    if (locomotion === "walk" || (locomotion as string) === "run" || (locomotion as string) === "turn") {
       this.transitionToAction("walk", 0.3);
     } else if (activeGesture === "point_left") {
       this.transitionToAction("point_left", 0.3);
@@ -185,6 +213,12 @@ class RealisticHumanoidRig implements AvatarRig {
       this.transitionToAction("listening", 0.35);
     } else if (activeGesture === "wave") {
       this.transitionToAction("wave", 0.3);
+    } else if (activeGesture === "greeting") {
+      this.transitionToAction("greeting", 0.3);
+    } else if (activeGesture === "celebrating") {
+      this.transitionToAction("celebrating", 0.35);
+    } else if (activeGesture === "goodbye") {
+      this.transitionToAction("goodbye", 0.3);
     } else if (this.isSpeaking) {
       // Auto-cycle through natural talk variants during speech
       this.talkTimer += delta;
@@ -204,13 +238,31 @@ class RealisticHumanoidRig implements AvatarRig {
     if (pointingState.weight > 0.001) {
       const w = pointingState.weight;
 
+      if (this.leftShoulderBone) this.leftShoulderBone.quaternion.slerp(pointingState.left.shoulderQuat, w);
       if (this.leftArmBone) this.leftArmBone.quaternion.slerp(pointingState.left.armQuat, w);
       if (this.leftForeArmBone) this.leftForeArmBone.quaternion.slerp(pointingState.left.foreArmQuat, w);
       if (this.leftHandBone) this.leftHandBone.quaternion.slerp(pointingState.left.handQuat, w);
 
+      if (this.rightShoulderBone) this.rightShoulderBone.quaternion.slerp(pointingState.right.shoulderQuat, w);
       if (this.rightArmBone) this.rightArmBone.quaternion.slerp(pointingState.right.armQuat, w);
       if (this.rightForeArmBone) this.rightForeArmBone.quaternion.slerp(pointingState.right.foreArmQuat, w);
       if (this.rightHandBone) this.rightHandBone.quaternion.slerp(pointingState.right.handQuat, w);
+
+      for (const [boneName, targetQuat] of Object.entries(pointingState.left.fingers)) {
+        const bone = this.leftFingerBones[boneName];
+        if (bone) {
+          bone.quaternion.slerp(targetQuat, w);
+        }
+      }
+      for (const [boneName, targetQuat] of Object.entries(pointingState.right.fingers)) {
+        const bone = this.rightFingerBones[boneName];
+        if (bone) {
+          bone.quaternion.slerp(targetQuat, w);
+        }
+      }
+    } else {
+      if (this.leftShoulderBone) this.leftShoulderBone.quaternion.copy(this.baseLeftShoulderQuat);
+      if (this.rightShoulderBone) this.rightShoulderBone.quaternion.copy(this.baseRightShoulderQuat);
     }
 
     // 5. Step Lip-Sync Controller (coarticulation + visemes)
@@ -253,14 +305,35 @@ class RealisticHumanoidRig implements AvatarRig {
       );
       this.neckBone.quaternion.copy(this.baseNeckQuat).multiply(neckOffset);
     }
+
+    // 8. Apply Smooth Mesh Yaw Rotation (turning towards destination or facing target)
+    this.currentMeshRotationY += (this.targetMeshRotationY - this.currentMeshRotationY) * Math.min(1.0, delta * 6.0);
+    this.root.rotation.y = this.currentMeshRotationY;
+  }
+
+  public setCamera(camera: THREE.PerspectiveCamera | null): void {
+    this.camera = camera;
   }
 
   public pointAt(
     targetRect: DOMRect | null,
     avatarLayerEl?: HTMLElement | null,
-    chatShellEl?: HTMLElement | null
+    canvasEl?: HTMLElement | null,
+    style: "point" | "present" = "point"
   ): void {
-    const res = this.pointingController.setTarget(targetRect, avatarLayerEl, chatShellEl);
+    const res = this.pointingController.setTarget(
+      targetRect,
+      avatarLayerEl,
+      canvasEl,
+      this.camera,
+      style,
+      {
+        leftArm: this.leftArmBone,
+        rightArm: this.rightArmBone,
+        leftShoulder: this.leftShoulderBone,
+        rightShoulder: this.rightShoulderBone,
+      }
+    );
     if (res.isEdgeCase && res.fallbackGesture) {
       this.animController.setGesture("explain", 2500);
     }
@@ -335,6 +408,7 @@ class ProceduralFallbackRig implements AvatarRig {
 
   public setLookAtTarget(): void {}
   public resetLookAt(): void {}
+  public setCamera(): void {}
   public pointAt(): void {}
   public stopPointing(): void {}
   public update(delta: number, time: number): void {

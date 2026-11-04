@@ -679,5 +679,208 @@ export function createHumanoidClips(): Record<string, THREE.AnimationClip> {
     clips["wave"] = new THREE.AnimationClip("wave", duration, tracks);
   }
 
+  // ==========================================
+  // 10. CELEBRATING (Joyous two-handed cheer with positive posture)
+  // ==========================================
+  {
+    const duration = 2.0;
+    const times = [0, 0.4, 0.8, 1.2, 1.6, 2.0];
+
+    const tracks: THREE.KeyframeTrack[] = [
+      createStandingHipsTrack(times),
+      ...createStandingLegTracks(times),
+      // Left arm raised high with bent elbow
+      createEulerTrack("LeftArm", times, [
+        [1.088, 0.097, -0.220],
+        [-0.85, 0.15, 0.95],
+        [-0.95, 0.18, 1.10],
+        [-0.88, 0.15, 1.00],
+        [-0.95, 0.18, 1.10],
+        [1.088, 0.097, -0.220],
+      ]),
+      createEulerTrack("LeftForeArm", times, [
+        [0.347, 0.149, 0.458],
+        [-0.45, -0.15, -0.30],
+        [-0.55, -0.18, -0.35],
+        [-0.48, -0.15, -0.32],
+        [-0.55, -0.18, -0.35],
+        [0.347, 0.149, 0.458],
+      ]),
+      createEulerTrack("LeftHand", times, [
+        [0.02, -0.12, -0.04],
+        [0.15, -0.18, 0.20],
+        [0.10, -0.15, 0.15],
+        [0.15, -0.18, 0.20],
+        [0.10, -0.15, 0.15],
+        [0.02, -0.12, -0.04],
+      ]),
+      // Right arm raised high with bent elbow
+      createEulerTrack("RightArm", times, [
+        [1.088, -0.097, 0.220],
+        [-0.85, -0.15, -0.95],
+        [-0.95, -0.18, -1.10],
+        [-0.88, -0.15, -1.00],
+        [-0.95, -0.18, -1.10],
+        [1.088, -0.097, 0.220],
+      ]),
+      createEulerTrack("RightForeArm", times, [
+        [0.347, -0.149, -0.458],
+        [-0.45, 0.15, 0.30],
+        [-0.55, 0.18, 0.35],
+        [-0.48, 0.15, 0.32],
+        [-0.55, 0.18, 0.35],
+        [0.347, -0.149, -0.458],
+      ]),
+      createEulerTrack("RightHand", times, [
+        [0.02, 0.12, 0.04],
+        [0.15, 0.18, -0.20],
+        [0.10, 0.15, -0.15],
+        [0.15, 0.18, -0.20],
+        [0.10, 0.15, -0.15],
+        [0.02, 0.12, 0.04],
+      ]),
+      ...createRelaxedFingerTracks(times),
+      createEulerTrack("Spine", times, [
+        [0, 0, 0],
+        [-0.04, 0, 0.02],
+        [-0.06, 0, -0.02],
+        [-0.04, 0, 0.02],
+        [-0.06, 0, -0.02],
+        [0, 0, 0],
+      ]),
+      createEulerTrack("Head", times, [
+        [0.02, 0, 0],
+        [-0.06, 0.02, 0],
+        [-0.08, -0.02, 0],
+        [-0.06, 0.02, 0],
+        [-0.08, -0.02, 0],
+        [0.02, 0, 0],
+      ]),
+    ];
+
+    clips["celebrating"] = new THREE.AnimationClip("celebrating", duration, tracks);
+  }
+
+  // ==========================================
+  // 11. GREETING (Polite welcoming bow and open presentation)
+  // ==========================================
+  {
+    const duration = 1.8;
+    const times = [0, 0.45, 0.9, 1.35, 1.8];
+
+    const tracks: THREE.KeyframeTrack[] = [
+      createStandingHipsTrack(times),
+      ...createStandingLegTracks(times),
+      createEulerTrack("LeftArm", times, [
+        [1.088, 0.097, -0.220],
+        [1.05, 0.12, -0.22],
+        [1.05, 0.12, -0.22],
+        [1.06, 0.11, -0.22],
+        [1.088, 0.097, -0.220],
+      ]),
+      createEulerTrack("LeftForeArm", times, [
+        [0.347, 0.149, 0.458],
+        [0.35, 0.12, 0.50],
+        [0.35, 0.12, 0.50],
+        [0.35, 0.12, 0.50],
+        [0.347, 0.149, 0.458],
+      ]),
+      createEulerTrack("LeftHand", times, [
+        [0.02, -0.12, -0.04],
+        [0.02, -0.12, -0.04],
+        [0.02, -0.12, -0.04],
+        [0.02, -0.12, -0.04],
+        [0.02, -0.12, -0.04],
+      ]),
+      createEulerTrack("RightArm", times, [
+        [1.088, -0.097, 0.220],
+        [0.85, -0.20, 0.05],
+        [0.82, -0.22, 0.08],
+        [0.86, -0.18, 0.06],
+        [1.088, -0.097, 0.220],
+      ]),
+      createEulerTrack("RightForeArm", times, [
+        [0.347, -0.149, -0.458],
+        [0.30, -0.10, -1.35],
+        [0.28, -0.10, -1.38],
+        [0.32, -0.10, -1.30],
+        [0.347, -0.149, -0.458],
+      ]),
+      createEulerTrack("RightHand", times, [
+        [0.02, 0.12, 0.04],
+        [-0.02, 0.16, -0.12],
+        [-0.04, 0.18, -0.14],
+        [-0.02, 0.16, -0.12],
+        [0.02, 0.12, 0.04],
+      ]),
+      ...createRelaxedFingerTracks(times),
+      createEulerTrack("Spine", times, [
+        [0, 0, 0],
+        [-0.05, 0, 0],
+        [-0.07, 0, 0],
+        [-0.03, 0, 0],
+        [0, 0, 0],
+      ]),
+      createEulerTrack("Head", times, [
+        [0.02, 0, 0],
+        [0.08, 0, 0],
+        [0.10, 0, 0],
+        [0.05, 0, 0],
+        [0.02, 0, 0],
+      ]),
+    ];
+
+    clips["greeting"] = new THREE.AnimationClip("greeting", duration, tracks);
+  }
+
+  // ==========================================
+  // 12. GOODBYE (Graceful parting farewell wave)
+  // ==========================================
+  {
+    const duration = 1.8;
+    const times = [0, 0.35, 0.7, 1.05, 1.4, 1.8];
+
+    const tracks: THREE.KeyframeTrack[] = [
+      createStandingHipsTrack(times),
+      ...createStandingLegTracks(times),
+      ...createRestingArmTracks("Left", times),
+      createEulerTrack("RightArm", times, [
+        [1.088, -0.097, 0.220],
+        [-0.92, -0.12, -0.98],
+        [-0.98, -0.14, -1.15],
+        [-0.92, -0.12, -0.98],
+        [-0.98, -0.14, -1.15],
+        [1.088, -0.097, 0.220],
+      ]),
+      createEulerTrack("RightForeArm", times, [
+        [0.347, -0.149, -0.458],
+        [-0.55, 0.18, 0.22],
+        [-0.48, 0.16, 0.10],
+        [-0.55, 0.18, 0.22],
+        [-0.48, 0.16, 0.10],
+        [0.347, -0.149, -0.458],
+      ]),
+      createEulerTrack("RightHand", times, [
+        [0.02, 0.12, 0.04],
+        [0.20, 0.18, -0.25],
+        [0.08, 0.15, -0.08],
+        [0.20, 0.18, -0.25],
+        [0.08, 0.15, -0.08],
+        [0.02, 0.12, 0.04],
+      ]),
+      ...createRelaxedFingerTracks(times),
+      createEulerTrack("Head", times, [
+        [0.02, 0, 0],
+        [0.04, -0.04, 0.01],
+        [0.02, -0.02, 0.01],
+        [0.04, -0.04, 0.01],
+        [0.02, -0.02, 0.01],
+        [0.02, 0, 0],
+      ]),
+    ];
+
+    clips["goodbye"] = new THREE.AnimationClip("goodbye", duration, tracks);
+  }
+
   return clips;
 }

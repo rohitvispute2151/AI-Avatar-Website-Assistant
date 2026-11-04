@@ -58,6 +58,7 @@ export class AvatarStage {
   private progressBar: HTMLElement | null = null;
   private progressText: HTMLElement | null = null;
   private lastTargetRect: DOMRect | null = null;
+  private lastStyle: "point" | "present" = "point";
 
   constructor(container: HTMLElement, options: AvatarStageOptions = {}) {
     this.container = container;
@@ -112,6 +113,7 @@ export class AvatarStage {
       },
     }).then((rig) => {
       this.rig = rig;
+      this.rig.setCamera?.(this.camera);
       this.scene.add(rig.root);
 
       // Connect speech emotion listener to facial controller
@@ -433,15 +435,13 @@ export class AvatarStage {
     }
   }
 
-  public pointAt(targetRect: DOMRect | null): void {
+  public pointAt(targetRect: DOMRect | null, style: "point" | "present" = "point"): void {
     this.lastTargetRect = targetRect;
+    this.lastStyle = style;
     if (!this.rig || !this.rig.pointAt) return;
     const avatarEl = (this.container.closest(".sg-avatar-layer") as HTMLElement) || this.container.parentElement;
-    const rootNode = this.container.getRootNode() as Document | ShadowRoot;
-    const chatEl = rootNode?.querySelector
-      ? ((rootNode.querySelector(".sg-chat-panel") || rootNode.querySelector("#sg-shell")) as HTMLElement | null)
-      : null;
-    this.rig.pointAt(targetRect, avatarEl, chatEl);
+    const canvasEl = this.renderer?.domElement || null;
+    this.rig.pointAt(targetRect, avatarEl, canvasEl, style);
   }
 
   public stopPointing(): void {
@@ -489,16 +489,19 @@ export class AvatarStage {
     const avatarEl = (this.container.closest(".sg-avatar-layer") as HTMLElement) || this.container.parentElement;
     if (!avatarEl) return;
 
-    this.isMoving = true;
-    if (this.rig) {
-      this.rig.animController.setLocomotion("walk");
-    }
-
     const currentRect = avatarEl.getBoundingClientRect();
     const startX = currentRect.left;
     const startY = currentRect.top;
     const targetX = anchor.x;
     const targetY = anchor.y;
+
+    this.isMoving = true;
+    if (this.rig) {
+      this.rig.animController.setLocomotion("walk");
+      // Turn avatar mesh towards movement direction
+      const moveDirection = targetX < startX ? -0.42 : 0.42;
+      this.rig.setMeshRotationY?.(moveDirection);
+    }
 
     const rawScale = parseFloat(avatarEl.style.getPropertyValue("--avatar-scale") || "1.0");
     const startScale = isNaN(rawScale) ? 1.0 : rawScale;
@@ -543,7 +546,7 @@ export class AvatarStage {
 
         // Dynamically recompute pointing direction as the avatar walks
         if (this.lastTargetRect) {
-          this.pointAt(this.lastTargetRect);
+          this.pointAt(this.lastTargetRect, this.lastStyle);
         }
 
         if (progress < 1.0) {
@@ -552,6 +555,8 @@ export class AvatarStage {
           this.isMoving = false;
           if (this.rig) {
             this.rig.animController.setLocomotion("idle");
+            const facingAngle = anchor.side === "left" ? 0.18 : anchor.side === "right" ? -0.18 : 0;
+            this.rig.setMeshRotationY?.(facingAngle);
           }
           resolve();
         }
@@ -591,6 +596,9 @@ export class AvatarStage {
     this.isMoving = true;
     if (this.rig) {
       this.rig.animController.setLocomotion("walk");
+      // Turn avatar mesh towards movement direction
+      const moveDirection = targetX < startX ? -0.42 : 0.42;
+      this.rig.setMeshRotationY?.(moveDirection);
     }
 
     const startTime = performance.now();
@@ -619,6 +627,7 @@ export class AvatarStage {
           this.isMoving = false;
           if (this.rig) {
             this.rig.animController.setLocomotion("idle");
+            this.rig.setMeshRotationY?.(0);
           }
           avatarEl.style.left = "";
           avatarEl.style.top = "";

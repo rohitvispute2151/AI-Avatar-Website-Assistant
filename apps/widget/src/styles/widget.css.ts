@@ -135,6 +135,99 @@ export const widgetStyles = `
   transform: translateX(-50%) translateY(-2px);
 }
 
+/* Floating Contextual Speech Bubble attached to Avatar */
+.sg-avatar-speech-bubble {
+  position: absolute;
+  top: -16px;
+  left: 50%;
+  transform: translateX(-50%) translateY(-100%);
+  background: rgba(15, 23, 42, 0.94);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 16px;
+  padding: 12px 16px;
+  width: max-content;
+  max-width: 320px;
+  color: #f8fafc;
+  font-size: 13px;
+  line-height: 1.5;
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.05);
+  pointer-events: auto;
+  user-select: text;
+  transition: opacity 0.25s ease, transform 0.25s ease;
+  z-index: 1000005;
+}
+
+.sg-avatar-speech-bubble::after {
+  content: "";
+  position: absolute;
+  bottom: -8px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 0;
+  height: 0;
+  border-left: 8px solid transparent;
+  border-right: 8px solid transparent;
+  border-top: 8px solid rgba(15, 23, 42, 0.94);
+}
+
+.sg-bubble-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.sg-bubble-tag {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: #38bdf8;
+  text-transform: uppercase;
+}
+
+.sg-bubble-typing {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.sg-bubble-typing span {
+  width: 5px;
+  height: 5px;
+  background: #38bdf8;
+  border-radius: 50%;
+  animation: sg-typing-bounce 1s infinite ease-in-out;
+}
+
+.sg-bubble-typing span:nth-child(2) { animation-delay: 0.2s; }
+.sg-bubble-typing span:nth-child(3) { animation-delay: 0.4s; }
+
+@keyframes sg-typing-bounce {
+  0%, 80%, 100% { transform: translateY(0); opacity: 0.4; }
+  40% { transform: translateY(-4px); opacity: 1; }
+}
+
+.sg-bubble-content {
+  color: #f1f5f9;
+  font-size: 13px;
+  line-height: 1.55;
+  font-weight: 400;
+}
+
+.sg-bubble-instruction {
+  margin-top: 8px;
+  padding: 4px 8px;
+  background: rgba(99, 102, 241, 0.15);
+  border: 1px solid rgba(99, 102, 241, 0.35);
+  border-radius: 8px;
+  font-size: 11px;
+  color: #c7d2fe;
+  font-weight: 500;
+}
+
 /* =============================================
    3. FLOATING ACTION DOCK (AI GUIDE + MIC + CHAT)
    Always docked at bottom-right (z-index: 1000005)
@@ -298,28 +391,30 @@ export const widgetStyles = `
   color: #ffffff;
 }
 
-/* Tour Toolbar (Floats above dock ONLY during active guided tours) */
+/* =============================================
+   UPGRADED MINIMAL TOUR HUD & EXPLORE BAR
+   ============================================= */
 .sg-tour-bar {
   position: fixed;
   bottom: 78px;
   right: 20px;
-  z-index: 1000002;
+  z-index: 1000005;
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 14px;
-  padding: 8px 18px;
-  background: rgba(16, 24, 40, 0.94);
-  backdrop-filter: blur(18px);
-  -webkit-backdrop-filter: blur(18px);
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  border-radius: 9999px;
-  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.55);
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 16px;
+  background: rgba(15, 23, 42, 0.94);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 18px;
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.05);
   color: #f1f5f9;
   font-size: 13px;
-  font-weight: 500;
   pointer-events: auto;
   user-select: none;
+  min-width: 320px;
+  max-width: calc(100vw - 40px);
   transition: opacity 0.25s ease, transform 0.25s ease;
 }
 
@@ -327,22 +422,156 @@ export const widgetStyles = `
   display: none !important;
 }
 
+.sg-tour-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sg-tour-badge {
+  background: linear-gradient(135deg, #4f46e5 0%, #06b6d4 100%);
+  color: #ffffff;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 4px;
+  letter-spacing: 0.05em;
+}
+
+.sg-tour-info {
+  font-size: 12px;
+  font-weight: 600;
+  color: #e2e8f0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sg-tour-progress-track {
+  width: 100%;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 9999px;
+  overflow: hidden;
+}
+
+.sg-tour-progress-fill {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, #38bdf8 0%, #818cf8 100%);
+  border-radius: 9999px;
+  transition: width 0.3s ease;
+}
+
 .sg-tour-controls {
   display: flex;
+  align-items: center;
   gap: 6px;
+  justify-content: space-between;
 }
 
 .sg-tour-btn {
-  background: rgba(255, 255, 255, 0.12);
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  color: #fff;
-  border-radius: 6px;
-  padding: 3px 8px;
-  font-size: 11px;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: #f1f5f9;
+  border-radius: 8px;
+  padding: 5px 10px;
+  font-size: 12px;
+  font-weight: 500;
   cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  transition: all 0.18s ease;
+  outline: none;
 }
+
 .sg-tour-btn:hover {
-  background: rgba(255, 255, 255, 0.22);
+  background: rgba(255, 255, 255, 0.2);
+  color: #ffffff;
+  transform: translateY(-1px);
+}
+
+.sg-tour-btn:active {
+  transform: translateY(0);
+}
+
+.sg-tour-btn-primary {
+  background: linear-gradient(135deg, #4f46e5 0%, #06b6d4 100%);
+  border: none;
+  font-weight: 600;
+  box-shadow: 0 4px 12px rgba(79, 70, 229, 0.35);
+}
+
+.sg-tour-btn-primary:hover {
+  background: linear-gradient(135deg, #4338ca 0%, #0891b2 100%);
+  box-shadow: 0 6px 16px rgba(79, 70, 229, 0.5);
+}
+
+.sg-tour-explore-btn {
+  background: rgba(99, 102, 241, 0.18);
+  border-color: rgba(99, 102, 241, 0.35);
+  color: #a5b4fc;
+}
+
+.sg-tour-explore-btn:hover {
+  background: rgba(99, 102, 241, 0.3);
+  color: #ffffff;
+}
+
+.sg-tour-mute-btn {
+  padding: 5px 8px;
+}
+
+.sg-tour-close-btn {
+  padding: 5px 8px;
+  background: rgba(239, 68, 68, 0.15);
+  border-color: rgba(239, 68, 68, 0.3);
+  color: #fca5a5;
+}
+
+.sg-tour-close-btn:hover {
+  background: rgba(239, 68, 68, 0.3);
+  color: #ffffff;
+}
+
+/* Explore Mode HUD Overlay */
+.sg-explore-bar {
+  position: fixed;
+  top: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1000005;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 18px;
+  background: rgba(15, 23, 42, 0.94);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(99, 102, 241, 0.4);
+  border-radius: 9999px;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.6);
+  color: #f1f5f9;
+  font-size: 13px;
+  pointer-events: auto;
+  user-select: none;
+  animation: sg-slide-down 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes sg-slide-down {
+  from { transform: translateX(-50%) translateY(-20px); opacity: 0; }
+  to { transform: translateX(-50%) translateY(0); opacity: 1; }
+}
+
+.sg-explore-pill {
+  font-weight: 700;
+  color: #38bdf8;
+}
+
+.sg-explore-hint {
+  color: #94a3b8;
+  font-size: 12px;
 }
 
 /* Messages Card — Frosted Dark Glass */

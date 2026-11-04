@@ -25,7 +25,7 @@ export const FeaturesSection: React.FC = () => {
   ];
 
   return (
-    <section id="features" style={{ padding: "80px 0" }}>
+    <section id="features" data-guide="features" style={{ padding: "80px 0" }}>
       <div className="container" style={{ maxWidth: "860px" }}>
         <div style={{ textAlign: "center", marginBottom: "56px" }}>
           <h2 style={{ fontSize: "36px", marginBottom: "12px" }}>

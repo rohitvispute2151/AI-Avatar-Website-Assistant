@@ -24,6 +24,7 @@ export class ActionExecutor {
   private onSpeakEnd?: () => void;
   private setExplainingMode?: (explaining: boolean) => void;
   private getChatRect?: () => DOMRect | null;
+  private onSpeechBubbleUpdate?: (text: string, isSpeaking: boolean, instruction?: string) => void;
   private activeTrackingCleanup?: () => void;
 
   constructor(
@@ -33,7 +34,8 @@ export class ActionExecutor {
     onSpeakStart?: () => void,
     onSpeakEnd?: () => void,
     setExplainingMode?: (explaining: boolean) => void,
-    getChatRect?: () => DOMRect | null
+    getChatRect?: () => DOMRect | null,
+    onSpeechBubbleUpdate?: (text: string, isSpeaking: boolean, instruction?: string) => void
   ) {
     this.stage = stage;
     this.highlighter = highlighter;
@@ -42,6 +44,11 @@ export class ActionExecutor {
     this.onSpeakEnd = onSpeakEnd;
     this.setExplainingMode = setExplainingMode;
     this.getChatRect = getChatRect;
+    this.onSpeechBubbleUpdate = onSpeechBubbleUpdate;
+  }
+
+  public setSpeechBubbleCallback(fn: (text: string, isSpeaking: boolean, instruction?: string) => void): void {
+    this.onSpeechBubbleUpdate = fn;
   }
 
   public setExplainingModeHandler(fn: (explaining: boolean) => void): void {
@@ -92,7 +99,9 @@ export class ActionExecutor {
 
     // If no specific page element is referenced, speak with natural two-handed presenting gesture
     this.stage.setGesture(plan.gesture || "explain");
-    this.speak(plan.answer);
+    await new Promise<void>((resolve) => {
+      this.speak(plan.answer, () => resolve());
+    });
   }
 
   /**
@@ -101,7 +110,12 @@ export class ActionExecutor {
    * scales down the avatar footprint, highlights the target, points with the nearest arm,
    * and smoothly returns to dock once finished.
    */
-  public async explainSection(el: HTMLElement, gesture: Gesture, speechText: string): Promise<void> {
+  public async explainSection(
+    el: HTMLElement,
+    gesture: Gesture,
+    speechText: string,
+    explicitStyle?: "point" | "present"
+  ): Promise<void> {
     this.cleanupActiveTracking();
 
     // 1. Measure visual content rect (cards, inner containers) instead of 100% width section wrapper
@@ -121,19 +135,28 @@ export class ActionExecutor {
     const anchor = calculateAvatarAnchor(targetRect, 290, 550, 20, true, chatRect);
 
     // 5. Highlight target section subtly
-    this.highlighter.highlight(el);
+    this.highlighter.highlight(el, undefined, { x: anchor.x + 130, y: anchor.y + 200 });
 
     // 6. Move avatar to anchor (plays walk locomotion, animates scale)
     await this.stage.moveToAnchor(anchor);
 
+    // Determine pointing vs presenting style based on element type
+    const isInteractive =
+      ["INPUT", "BUTTON", "SELECT", "TEXTAREA", "A"].includes(el.tagName) ||
+      el.getAttribute("role") === "button" ||
+      el.getAttribute("role") === "textbox" ||
+      (el.id && (el.id.includes("input") || el.id.includes("btn") || el.id.includes("field")));
+    const pointingStyle: "point" | "present" =
+      explicitStyle || (isInteractive || gesture === "point_left" || gesture === "point_right" ? "point" : "present");
+
     // 7. Point and gaze toward target element procedurally
-    this.stage.pointAt(targetRect);
+    this.stage.pointAt(targetRect, pointingStyle);
 
     // 8. Setup dynamic recomputation on scroll and window resize
     const updateTracking = () => {
       if (!el.isConnected) return;
       const currentRect = getVisualContentRect(el);
-      this.stage.pointAt(currentRect);
+      this.stage.pointAt(currentRect, pointingStyle);
     };
     window.addEventListener("scroll", updateTracking, { passive: true });
     window.addEventListener("resize", updateTracking, { passive: true });
@@ -142,15 +165,28 @@ export class ActionExecutor {
       window.removeEventListener("resize", updateTracking);
     };
 
-    // 9. Speak answer, then return avatar to resting dock
-    this.speak(speechText, () => {
-      this.cleanupActiveTracking();
-      setTimeout(() => {
-        this.highlighter.clear();
-        this.stage.stopPointing();
-        this.stage.getRig()?.resetLookAt();
-        this.stage.returnToDock();
-      }, 1500);
+    if (this.onSpeechBubbleUpdate) {
+      this.onSpeechBubbleUpdate(speechText, true);
+    }
+
+    // 9. Speak answer, hold gesture, then return avatar to resting dock
+    return new Promise<void>((resolve) => {
+      this.speak(speechText, () => {
+        if (this.onSpeechBubbleUpdate) {
+          this.onSpeechBubbleUpdate(speechText, false);
+        }
+        this.cleanupActiveTracking();
+        setTimeout(() => {
+          this.highlighter.clear();
+          this.stage.stopPointing();
+          this.stage.getRig()?.resetLookAt();
+          this.stage.returnToDock();
+          if (this.onSpeechBubbleUpdate) {
+            this.onSpeechBubbleUpdate("", false);
+          }
+          resolve();
+        }, 1500);
+      });
     });
   }
 
@@ -158,23 +194,31 @@ export class ActionExecutor {
     const el = resolveTargetElement(targetNodeId);
     if (!el) {
       this.stage.setGesture("open_palm");
-      this.speak("I couldn't locate that element on the current page.");
+      await new Promise<void>((resolve) => {
+        this.speak("I couldn't locate that element on the current page.", () => resolve());
+      });
       return;
     }
 
     await this.explainSection(el, gesture, speechText);
   }
 
-  public async startTour(steps: PlannedStep[]): Promise<void> {
+  public async startTour(steps: (PlannedStep | any)[]): Promise<void> {
     if (this.setExplainingMode) {
       this.setExplainingMode(true);
     }
 
     tourController.start(
       steps,
-      async (step, index, total) => {
+      async (step: any, index: number, total: number) => {
         this.cleanupActiveTracking();
-        const el = resolveTargetElement(step.targetNodeId);
+        const targetId = step.target || step.targetNodeId;
+        const spokenText = step.narration || step.spokenText;
+        const instruction = step.interactionInstruction;
+
+        tourController.setState("navigating");
+        const el = resolveTargetElement(targetId);
+
         if (el) {
           let targetRect = getVisualContentRect(el);
           const vpWidth = typeof window !== "undefined" ? window.innerWidth : 1366;
@@ -186,14 +230,27 @@ export class ActionExecutor {
           const chatRect = this.getChatRect ? this.getChatRect() : null;
           const anchor = calculateAvatarAnchor(targetRect, 290, 550, 20, true, chatRect);
 
-          this.highlighter.highlight(el);
+          tourController.setState("approaching");
+          this.highlighter.highlight(el, instruction, { x: anchor.x + 130, y: anchor.y + 200 });
           await this.stage.moveToAnchor(anchor);
-          this.stage.pointAt(targetRect);
+
+          tourController.setState("presenting");
+          const isInteractive =
+            ["INPUT", "BUTTON", "SELECT", "TEXTAREA", "A"].includes(el.tagName) ||
+            step.stepKind === "form_field" ||
+            step.gesture === "point_left" ||
+            step.gesture === "point_right";
+          const pointingStyle: "point" | "present" = isInteractive ? "point" : "present";
+          this.stage.pointAt(targetRect, pointingStyle);
+
+          if (step.gesture) {
+            this.stage.setGesture(step.gesture);
+          }
 
           const updateTracking = () => {
             if (!el.isConnected) return;
             const currentRect = getVisualContentRect(el);
-            this.stage.pointAt(currentRect);
+            this.stage.pointAt(currentRect, pointingStyle);
           };
           window.addEventListener("scroll", updateTracking, { passive: true });
           window.addEventListener("resize", updateTracking, { passive: true });
@@ -204,8 +261,17 @@ export class ActionExecutor {
         } else {
           this.stage.setGesture(step.gesture || "open_palm");
         }
-        this.speak(step.spokenText, () => {
-          // Keep highlight until next step
+
+        tourController.setState("speaking");
+        if (this.onSpeechBubbleUpdate) {
+          this.onSpeechBubbleUpdate(spokenText, true, instruction);
+        }
+
+        this.speak(spokenText, () => {
+          tourController.setState("awaiting_user");
+          if (this.onSpeechBubbleUpdate) {
+            this.onSpeechBubbleUpdate(spokenText, false, instruction);
+          }
         });
       },
       () => {
@@ -214,6 +280,9 @@ export class ActionExecutor {
         this.stage.stopPointing();
         this.stage.returnToDock();
         this.stage.setState("idle");
+        if (this.onSpeechBubbleUpdate) {
+          this.onSpeechBubbleUpdate("", false);
+        }
         if (this.setExplainingMode) {
           this.setExplainingMode(false);
         }
@@ -226,17 +295,19 @@ export class ActionExecutor {
   public async guideFormField(targetNodeId: string, speechText: string): Promise<void> {
     const el = resolveTargetElement(targetNodeId);
     if (!el) {
-      this.speak(speechText);
+      await new Promise<void>((resolve) => {
+        this.speak(speechText, () => resolve());
+      });
       return;
     }
 
-    await this.explainSection(el, "point_right", speechText);
+    await this.explainSection(el, "point_right", speechText, "point");
   }
 
   public handleFormStateChange(nodeId: string, state: FormState): void {
     if (tourController.getStatus() === "running") {
       const currentStep = tourController.getCurrentStep();
-      if (currentStep && currentStep.targetNodeId === nodeId && currentStep.stepKind === "form_field") {
+      if (currentStep && (currentStep.targetNodeId === nodeId || currentStep.target === nodeId) && currentStep.stepKind === "form_field") {
         if (state === "filled") {
           setTimeout(() => {
             if (tourController.getStatus() === "running") {
@@ -256,6 +327,9 @@ export class ActionExecutor {
     this.highlighter.clear();
     this.stage.stopPointing();
     this.stage.returnToDock();
+    if (this.onSpeechBubbleUpdate) {
+      this.onSpeechBubbleUpdate("", false);
+    }
     if (this.setExplainingMode) {
       this.setExplainingMode(false);
     }
